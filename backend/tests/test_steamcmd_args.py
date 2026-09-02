@@ -26,13 +26,18 @@ class _FakeCtx:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("validate", [True, False])
-async def test_install_or_update_passes_app_info_update_before_app_update(monkeypatch, validate):
+async def test_install_or_update_passes_app_info_update_before_app_update(
+    monkeypatch, tmp_path, validate
+):
     captured: dict[str, list[str]] = {}
 
     async def _fake_stream(args, ctx, *, phase):  # noqa: ANN001
         captured["args"] = list(args)
         return 0
 
+    # install_or_update() mkdirs settings.server_dir; keep that off the real
+    # (container) path so the test runs anywhere.
+    monkeypatch.setattr(steamcmd.settings, "server_dir", tmp_path / "server")
     monkeypatch.setattr(steamcmd, "_stream", _fake_stream)
 
     result = await steamcmd.install_or_update(_FakeCtx(), validate=validate)
