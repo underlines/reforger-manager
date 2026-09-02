@@ -1,20 +1,41 @@
-name: reforger-manager
+name: ${COMPOSE_PROJECT_NAME:-reforger-manager}
 
-# Persistent data lives under ${DATA_DIR} (default ./data): the Reforger install
-# (~10 GB), the addon cache (tens of GB) and Postgres. Point DATA_DIR at a roomy
-# location in .env for production.
+# One deployment-shaped compose. Everything environment-specific is a
+# ${VARIABLE} with a dev default; supply real values via any of:
+#   - a .env file next to this file (docker compose loads it automatically)
+#   - the shell environment
+#   - Portainer -> Stacks -> <stack> -> Environment variables
+# See README.md "Deploying" for the full list.
+#
+# docker-compose.override.yml (local dev: bridge networking) is merged only by
+# the `docker compose` CLI, never by Portainer.
+#
+# IMPORTANT: set DATA_DIR to an absolute host path with room for tens of GB
+# (Reforger engine ~10 GB + addon cache). The ./data default is local-dev only;
+# on a server, an unset DATA_DIR would fill the stack's working directory.
 
 services:
   reforger-manager:
     build: .
-    container_name: reforger-manager
-    # Host networking: spawned Reforger game servers must bind host UDP ports
-    # (2001 game, 17777 A2S, 19999 RCON) and Reforger is sensitive to NAT.
-    # docker-compose.override.yml switches this to bridge for local dev.
+    container_name: ${COMPOSE_PROJECT_NAME:-reforger-manager}
+    # Reforger is NAT-sensitive and spawned game servers bind host UDP ports
+    # (2001 game / 17777 A2S / 19999 RCON), so the manager needs host networking
+    # on a Linux host. docker-compose.override.yml switches this to bridge for
+    # local development on Docker Desktop.
     network_mode: host
-    env_file:
-      - .env
-    restart: unless-stopped
+    restart: ${RESTART_POLICY:-unless-stopped}
+    environment:
+      TZ: ${TZ:-UTC}
+      DATABASE_URL: '${DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-reforger}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB:-reforger_manager}}'
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-12}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD (bootstraps the admin user once)}
+      DB_MIGRATE_ON_STARTUP: ${DB_MIGRATE_ON_STARTUP:-create_all}
+      ENGINE_CHECK_ON_STARTUP: ${ENGINE_CHECK_ON_STARTUP:-true}
+      NIGHTLY_CHECK_ENABLED: ${NIGHTLY_CHECK_ENABLED:-false}
+      NIGHTLY_CHECK_HOUR: ${NIGHTLY_CHECK_HOUR:-3}
+      CORS_ORIGINS: '${CORS_ORIGINS:-["http://localhost:5173"]}'
     depends_on:
       reforger-manager-db:
         condition: service_healthy
@@ -30,21 +51,21 @@ services:
       retries: 20
 
   reforger-manager-db:
-    image: postgres:17
-    container_name: reforger-manager-db
-    restart: unless-stopped
+    image: postgres:${POSTGRES_VERSION:-17}
+    container_name: ${COMPOSE_PROJECT_NAME:-reforger-manager}-db
+    restart: ${RESTART_POLICY:-unless-stopped}
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-reforger}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-reforger_manager}
     volumes:
       - ${DATA_DIR:-./data}/pg:/var/lib/postgresql/data
-    # Published on loopback only so the host-networked manager reaches it at
-    # localhost:5432 without exposing Postgres to the LAN.
+    # Loopback-only publish so the host-networked manager reaches it at
+    # 127.0.0.1:5432 without exposing Postgres on the LAN.
     ports:
-      - "127.0.0.1:5432:5432"
+      - "${DB_BIND_ADDR:-127.0.0.1}:${DB_PORT:-5432}:5432"
     networks:
-      - reforger-manager-db-net
+      - db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 20s
@@ -52,8 +73,6 @@ services:
       retries: 10
 
 networks:
-  # The db's isolated bridge. The manager is host-networked and does not join it;
-  # it talks to the db over the published 127.0.0.1:5432 mapping instead.
-  reforger-manager-db-net:
-    name: reforger-manager-db-net
+  db:
+    name: ${COMPOSE_PROJECT_NAME:-reforger-manager}-db-net
     driver: bridge

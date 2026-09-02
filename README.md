@@ -87,27 +87,62 @@ blocked while a server runs.
   `gameVersion` mismatch, which pins went stale (held against a build that is no
   longer installed).
 
-## Build & deploy
+## Deploying
+
+`docker-compose.yml` is the deployment file: `network_mode: host` (Reforger needs
+the host UDP ports), `build: .`, and every environment-specific value is a
+`${VARIABLE}` with a dev default. Supply real values three equivalent ways — a
+`.env` file next to the compose (auto-loaded), the shell environment, or a
+Portainer stack's *Environment variables*.
 
 ```bash
-cp .env.example .env       # set real secrets; keep DATABASE_URL in sync with POSTGRES_*
-docker compose up -d --build
-docker compose logs -f reforger-manager
+cp .env.example .env         # set at least the three REQUIRED vars below
+docker compose -f docker-compose.yml up -d      # production shape (host networking)
 ```
 
-Compose files and `Dockerfile` are at the repo root. `docker-compose.override.yml`
-is merged automatically and carries local-dev settings (bridge networking,
-`./data` bind mounts). On a production host with working host networking, run the
-base file only: `docker compose -f docker-compose.yml up -d`.
+### Variables
 
-The `reforger-manager` image is multi-stage: a `node` stage runs `npm ci && npm
-run build` for the SPA, then the runtime stage copies `frontend/dist` in and
-serves it from FastAPI (`app/main.py` mounts `/assets` and falls back to
-`index.html` for client-side routes — the frontend uses history-mode
-`BrowserRouter`). There is no separate frontend container and no bind mount over
-`/app`, so **frontend changes require an image rebuild**. Dev workflows:
-[CLAUDE.md](CLAUDE.md), `frontend/README.md`. Live end-to-end test against a
-running stack: `scripts/e2e_live.py` (`scripts/README.md`).
+| Variable | Default | Notes |
+|---|---|---|
+| `DATA_DIR` | `./data` | Absolute host path for bind mounts — Reforger install (~10 GB), addon cache (tens of GB), Postgres. **Always set this on a server**; the `./data` default would fill the stack's working dir. |
+| `POSTGRES_PASSWORD` | — **required** | deploy refuses to start if unset |
+| `JWT_SECRET` | — **required** | rotating it invalidates all sessions |
+| `ADMIN_PASSWORD` | — **required** | used once to create the `admin` user on an empty DB |
+| `POSTGRES_USER` / `POSTGRES_DB` / `POSTGRES_VERSION` | `reforger` / `reforger_manager` / `17` | |
+| `DATABASE_URL` | built from the `POSTGRES_*` vars @ `127.0.0.1:5432` | set only if the DB is elsewhere |
+| `ADMIN_USERNAME` | `admin` | ignored after first boot |
+| `TZ` | `UTC` | |
+| `CORS_ORIGINS` | `["http://localhost:5173"]` | JSON array; add your served origin |
+| `DB_MIGRATE_ON_STARTUP` | `create_all` | or `alembic` |
+| `ENGINE_CHECK_ON_STARTUP` / `NIGHTLY_CHECK_ENABLED` / `NIGHTLY_CHECK_HOUR` / `JWT_EXPIRE_HOURS` | `true` / `false` / `3` / `12` | |
+| `COMPOSE_PROJECT_NAME` / `RESTART_POLICY` / `DB_BIND_ADDR` / `DB_PORT` | `reforger-manager` / `unless-stopped` / `127.0.0.1` / `5432` | rarely changed |
+
+TLS termination and routing are out of scope for this compose — put a reverse
+proxy in front and point it at `http://<host>:18090`.
+
+### Portainer git-stack + CI
+
+`.github/workflows/ci.yml` runs `pytest` + `npm run build` on every push/PR, then
+on a push to `main` POSTs to a Portainer stack webhook so the NAS re-pulls and
+redeploys. Setup:
+
+1. Portainer → *Stacks* → add stack, build method **Repository**, this repo,
+   compose path `docker-compose.yml`. Set the variables above under *Environment
+   variables*. Enable *GitOps updates → Webhook*.
+2. `gh secret set PORTAINER_WEBHOOK_URL` with the webhook URL from step 1 — the
+   only secret GitHub holds; a leak only lets someone trigger a redeploy.
+
+The build happens on the NAS (`build: .`), so a deploy takes a few minutes.
+
+### Image internals
+
+Multi-stage: a `node` stage runs `npm ci && npm run build`, then the runtime
+stage copies `frontend/dist` in and FastAPI serves it (`app/main.py` mounts
+`/assets`, falls back to `index.html` for client-side routes). No separate
+frontend container, no bind mount over `/app` — **frontend changes need an image
+rebuild**. Dev workflows: [CLAUDE.md](CLAUDE.md), `frontend/README.md`. Live
+end-to-end test against a running stack: `scripts/e2e_live.py`
+(`scripts/README.md`).
 
 ### API auth for manual calls
 
@@ -122,15 +157,6 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" $B/api/servers/1/start
 
 WebSockets (`/api/jobs/stream`, `/api/servers/{id}/console`, `/api/servers/{id}/stats`) take the JWT
 as `?token=` since browsers can't set the header on a WS handshake.
-
-### Config / env
-
-`.env` (git/dockerignored, real secrets) carries Postgres creds, `JWT_SECRET`, `ADMIN_USERNAME` /
-`ADMIN_PASSWORD`, ports and the in-container bind-mount paths — see `.env.example` for the full
-list. Optional: `NIGHTLY_CHECK_ENABLED=true` (+ `NIGHTLY_CHECK_HOUR`, `NIGHTLY_CHECK_INTERVAL_SECONDS`)
-turns on the nightly engine-check + mod-update-check + cache-scan cycle (default off).
-`DB_MIGRATE_ON_STARTUP` is `create_all` (default) or `alembic`. `CORS_ORIGINS` is a JSON array —
-keep `http://localhost:5173` for `npm run dev`.
 
 ### Pre-flight validation
 

@@ -88,6 +88,12 @@ full list. Notable: `DB_MIGRATE_ON_STARTUP` (`create_all` default, or
 `alembic`), `NIGHTLY_CHECK_ENABLED`, `CORS_ORIGINS` (JSON array — keep
 `http://localhost:5173` for `npm run dev`).
 
+`docker-compose.yml` parameterizes every environment-specific value as a
+`${VAR}` (dev defaults; `:?` on the three required secrets). It is also the
+deploy file — Portainer git-stack + `.github/workflows/ci.yml` webhook; see
+README "Deploying". `docker-compose.override.yml` is dev-only and Portainer
+does not merge it.
+
 ## Disk space
 
 The engine install and the addon cache are large (tens of GB combined) and grow

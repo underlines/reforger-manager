@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
 
     # --- general ---
-    tz: str = "Europe/Zurich"
+    tz: str = "UTC"
     app_name: str = "Reforger Manager"
     app_version: str = "0.2.0"
 
@@ -73,12 +73,9 @@ class Settings(BaseSettings):
     job_log_ring: int = 200
     # Explicit allow-list (S19 / PLAN G33). The SPA is served same-origin by
     # FastAPI, so this only affects the Vite dev server and any stray
-    # cross-origin caller. Keep localhost:5173 or `npm run dev` breaks.
-    cors_origins: list[str] = [
-        "https://armaserver.badis.net",
-        "http://192.168.1.10:18090",
-        "http://localhost:5173",
-    ]
+    # cross-origin caller. Keep localhost:5173 or `npm run dev` breaks; add any
+    # externally served origin via the CORS_ORIGINS env var (JSON array).
+    cors_origins: list[str] = ["http://localhost:5173"]
 
     # ------------------------------------------------------------------ derived
     @property
