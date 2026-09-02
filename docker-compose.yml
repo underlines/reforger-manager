@@ -17,6 +17,10 @@ name: ${COMPOSE_PROJECT_NAME:-reforger-manager}
 services:
   reforger-manager:
     build: .
+    # Rebuild the image on every deploy even if one is already cached — required
+    # for Portainer git-stack redeploys to pick up new commits (frontend/dist is
+    # baked into the image).
+    pull_policy: build
     container_name: ${COMPOSE_PROJECT_NAME:-reforger-manager}
     # Reforger is NAT-sensitive and spawned game servers bind host UDP ports
     # (2001 game / 17777 A2S / 19999 RCON), so the manager needs host networking
