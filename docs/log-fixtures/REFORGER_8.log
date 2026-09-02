@@ -1,0 +1,99 @@
+SCRIPT       : Compiling Game scripts
+ SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,785": 'GetPlayerPlatformKind' is obsolete
+ SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,786": 'GetPlayerPlatformId' is obsolete
+ SCRIPT    (W): @"scripts/Game/Workshop/SCR_AddonManager.c,876": 'GetRefCount' is obsolete: Will be removed
+ SCRIPT    (W): @"scripts/Game/Campaign/SCR_PlayerProfileManagerComponent.c,142": 'PlayerData' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,159": 'GetDSSession' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,162": 'RoomID' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,197": 'GetDSSession' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,201": 'RoomID' is obsolete
+ SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,481": 'GetStorage' is obsolete
+ SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,483": 'GetOnlineWritePrivilege' is obsolete
+ SCRIPT    (W): @"scripts/Game/Utilities/SCR_PlayerIdentityUtils.c,20": 'GetPlayerIdentityId' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,643": 'GetNotifyCount' is obsolete: Will be substitued by Notification Api.
+ SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,645": 'GetNotifyItem' is obsolete: Will be substitued by Notification Api.
+ SCRIPT    (W): @"scripts/Game/DataCollection/PlayerData/SCR_PlayerData.c,210": 'PlayerData' is obsolete
+BACKEND   (E): Addon 65AC6E702A3FA981 (Conflict Everon PVE RHS) - Addon has dependencies deleted from workshop.
+BACKEND   (E): Addon 6512CC017515F9EB - Addon was not found on workshop.
+BACKEND   (E): Addon 65906C6513A8D3D4 - Addon was not found on workshop.
+BACKEND   (E): Addon 6507450F3E03FE21 - Addon was not found on workshop.
+BACKEND   (E): Addon 64869009DD4637C4 - Addon was not found on workshop.
+BACKEND   (E): Addon 64863EE1C8CF7512 - Addon was not found on workshop.
+BACKEND   (E): 6 addons are not downloadable! Cannot start until they are removed from server config.
+BACKEND   (E): Failed to fetch addon details from workshop API! Repeat later or try different mods.
+ENGINE    (E): Unable to initialize the game
+RESOURCES (E): ==== Resource leaks ====
+RESOURCES (E): ui/fonts/robotomono_msdf_28.edds   1
+ENGINE       : Creating engine.
+ENGINE       : FileSystem: Adding relative directory '/home/steam/armaservermanager/servers/REFORGER/profiles/8/logs/logs_2026-09-02_00-27-04' to filesystem under name logs
+ENGINE       : FileSystem: Adding relative directory '/home/steam/armaservermanager/servers/REFORGER/profiles/8/profile' to filesystem under name profile
+ENGINE       : FileSystem: Current working directory: '/home/steam/armaservermanager/servers/REFORGER/'
+ENGINE       : Initializing engine, version 191843
+ENGINE       : CLI Params: -config /home/steam/armaservermanager/servers/REFORGER/REFORGER_8.json -profile /home/steam/armaservermanager/servers/REFORGER/profiles/8 -addonDownloadDir /home/steam/armaservermanager/mods/reforger -logAppend -maxFPS 60 
+ENGINE       : Addon dirs:
+ ENGINE       : dir: './addons'
+ ENGINE       : dir: '/home/steam/armaservermanager/servers/REFORGER/profiles/8/addons'
+ENGINE       : Available addons:
+ ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859' (packed)
+ ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C' (packed)
+ENGINE       : FileSystem: Adding package './addons/data/' (pak count: 6) to filesystem under name ArmaReforger
+ENGINE       : FileSystem: Adding package './addons/core/' (pak count: 1) to filesystem under name core
+ENGINE       : CPU vendor         : GenuineIntel
+ENGINE       : CPU type           : 1
+ENGINE       : CPU name           : Intel(R) Pentium(R) Gold 8505
+ENGINE       : CPU cache info     : Unknown cache
+ENGINE       : CPU count logical  : 6
+ENGINE       : CPU count physical : 12
+ENGINE       : CPU features       : mmx sse sse2 sse3 ssse3 sse4_1 sse4_2 popcnt aesni pclmulqdq osxsave avx sha avx2
+RESOURCES    : ResourceDB: loading cache (id=0 name=ArmaReforger path=./addons/data/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=1 name=core path=./addons/core/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=2 name=profile path=/home/steam/armaservermanager/servers/REFORGER/profiles/8/profile/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=3 name=logs path=/home/steam/armaservermanager/servers/REFORGER/profiles/8/logs/logs_2026-09-02_00-27-04/resourceDatabase.rdb)
+ENGINE       : GameProject load
+ ENGINE       : Loaded addons:
+  ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C'
+  ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859'
+ENGINE       : Loading custom engine user config '$profile:.save/settings/ReforgerEngineSettings.conf'
+ENGINE       : No Enfusion settings file loaded. Continuing with defaults
+RENDER       : Basic screen setup:
+RENDER       :   Back buffer width x height: 0x0
+RENDER       :   Back buffer format	       : TEXFMT_UNKNOWN (0)
+RENDER       :   MSAA                      : none
+RENDER       : GPU_DUMMY (0xFFFF) (Enfusion dummy render) with 1 GPU detected, VRAM 128MB (fast 128MB), shared 128MB, driver version Unknown version
+RENDER       : Detected output devices:
+RENDER       :  * 1 device/s connected to Dummy:
+RENDER       :    Dummy output (Dummy device for our dummy render.), 1920x1080 (offset 0x0), 60Hz
+RENDER       :   Concurrent frames limit 2
+ENGINE       : Job system settings: coreCount=6, shortJobContextCount=6, shortJobThreadCount=5, longJobThreadCount=2
+PROFILING    : Settings changed took: 0.015000 ms
+ENGINE       : Initializing inputs.
+NETWORK      : Initializing networking.
+NETWORK      : Using new GameRplScheduler.
+ SCRIPT       : SCRIPT       : Initializing scripts
+  SCRIPT       : SCRIPT       : ScriptProjectManager init
+ PROFILING    : ScriptProjectManager init took: 0.007000 ms
+PROFILING    : Initializing scripts took: 11.252000 ms
+ENGINE       : Enfusion engine successfully created.
+GUI          : Using default language (en_us)
+GUI          : Loading 'en_us' localization file.
+ INIT         : INIT         : Loading StringTable
+PROFILING    : Loading StringTable took: 17.288000 ms
+ SCRIPT       : SCRIPT       : Compiling GameLib scripts
+ SCRIPT       : Module: GameLib; loaded 465x files; 607x classes; used 654K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_VHC_OVERRIDE,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE"; CRC32: 4507af04
+PROFILING    : Compiling GameLib scripts took: 21.421000 ms
+ SCRIPT       : SCRIPT       : Compiling Game scripts
+ SCRIPT       : Module: Game; loaded 5660x files; 10996x classes; used 25470K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_VHC_OVERRIDE,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE,ENABLE_BASE_DESTRUCTION,BUDGET_OPTIMIZATION_CHECKS,DEBUG,RESPAWN_TIMER_COMPONENT_DEBUG,DEBUG_CONFIGURABLE_DIALOGS,DISABLE_WEAPON_SWITCHING,SCRIPTED_AIM_MODIFIER_DEBUG"; CRC32: c400e126
+PROFILING    : Compiling Game scripts took: 1067.008000 ms
+INIT         : Creating game instance(ArmaReforgerScripted), version 1.8.0.10 built 2026-07-31 15:18:14 UTC.
+BACKEND      : Loading dedicated server config.
+ BACKEND      : Server config loaded.
+ BACKEND      : JSON Schema Validation:
+  BACKEND      : JSON is Valid
+ENGINE       : Game successfully created.
+BACKEND      : Attempting online Game Config instead.
+PLATFORM     : Save data from container 'settings' have been loaded
+PLATFORM     : Save data from container 'sessions' have been loaded
+PLATFORM     : System language differs from the saved one - using new language {new: 'en_us'; old: ''}
+PLATFORM     : Save data transaction to 'settings' started.
+NETWORK      : Starting dedicated server using command line args.
+ENGINE       : Game destroyed.

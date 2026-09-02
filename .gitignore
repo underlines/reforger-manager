@@ -1,0 +1,38 @@
+# --- Runtime data (large; lives on D: for local dev) ---
+# Reforger install (~10 GB), addon cache (up to ~20 GB), Postgres data,
+# generated per-server configs and profile logs. Never commit any of it,
+# but keep the empty directory skeleton (data/*/.gitkeep).
+/data/**
+!/data/
+!/data/*/
+!/data/*/.gitkeep
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+npm-debug.log*
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db

@@ -1,0 +1,51 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Docs (README, PLAN, STORIES, etc.) — not needed in the image
+*.md
+**/*.md
+!backend/**/*.md
+
+# Frontend build artifacts and local dependency caches
+frontend/node_modules
+frontend/dist
+frontend/.vite
+frontend/.cache
+
+# Python cruft
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.venv
+venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Local runtime data (bind-mounted at runtime; must never enter the build context)
+data/
+
+# Compose overrides / agent config (not for the image)
+docker-compose.override.yml
+docker-compose.*.yml
+.claude/
+
+# Repo / archive / editor cruft
+.git
+.gitignore
+_archive
+.vscode
+.idea
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Handover / reference docs (not for the image)
+docs/
+
+# Tests (not for the runtime image)
+backend/tests/
+**/tests/

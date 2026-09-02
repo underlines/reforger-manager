@@ -1,0 +1,277 @@
+SCRIPT       : Compiling Game scripts
+ SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,785": 'GetPlayerPlatformKind' is obsolete
+ SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,786": 'GetPlayerPlatformId' is obsolete
+ SCRIPT    (W): @"scripts/Game/Workshop/SCR_AddonManager.c,876": 'GetRefCount' is obsolete: Will be removed
+ SCRIPT    (W): @"scripts/Game/Campaign/SCR_PlayerProfileManagerComponent.c,142": 'PlayerData' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,159": 'GetDSSession' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,162": 'RoomID' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,197": 'GetDSSession' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,201": 'RoomID' is obsolete
+ SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,481": 'GetStorage' is obsolete
+ SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,483": 'GetOnlineWritePrivilege' is obsolete
+ SCRIPT    (W): @"scripts/Game/Utilities/SCR_PlayerIdentityUtils.c,20": 'GetPlayerIdentityId' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,643": 'GetNotifyCount' is obsolete: Will be substitued by Notification Api.
+ SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,645": 'GetNotifyItem' is obsolete: Will be substitued by Notification Api.
+ SCRIPT    (W): @"scripts/Game/DataCollection/PlayerData/SCR_PlayerData.c,210": 'PlayerData' is obsolete
+ENGINE       : Creating engine.
+ENGINE       : FileSystem: Adding relative directory '/home/steam/armaservermanager/servers/REFORGER/profiles/7/logs/logs_2026-09-02_00-22-57' to filesystem under name logs
+ENGINE       : FileSystem: Adding relative directory '/home/steam/armaservermanager/servers/REFORGER/profiles/7/profile' to filesystem under name profile
+ENGINE       : FileSystem: Current working directory: '/home/steam/armaservermanager/servers/REFORGER/'
+ENGINE       : Initializing engine, version 191843
+ENGINE       : CLI Params: -config /home/steam/armaservermanager/servers/REFORGER/REFORGER_7.json -profile /home/steam/armaservermanager/servers/REFORGER/profiles/7 -addonDownloadDir /home/steam/armaservermanager/mods/reforger -logAppend -maxFPS 60 
+ENGINE       : Addon dirs:
+ ENGINE       : dir: './addons'
+ ENGINE       : dir: '/home/steam/armaservermanager/servers/REFORGER/profiles/7/addons'
+ENGINE       : Available addons:
+ ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859' (packed)
+ ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C' (packed)
+ENGINE       : FileSystem: Adding package './addons/data/' (pak count: 6) to filesystem under name ArmaReforger
+ENGINE       : FileSystem: Adding package './addons/core/' (pak count: 1) to filesystem under name core
+ENGINE       : CPU vendor         : GenuineIntel
+ENGINE       : CPU type           : 1
+ENGINE       : CPU name           : Intel(R) Pentium(R) Gold 8505
+ENGINE       : CPU cache info     : Unknown cache
+ENGINE       : CPU count logical  : 6
+ENGINE       : CPU count physical : 12
+ENGINE       : CPU features       : mmx sse sse2 sse3 ssse3 sse4_1 sse4_2 popcnt aesni pclmulqdq osxsave avx sha avx2
+RESOURCES    : ResourceDB: loading cache (id=0 name=ArmaReforger path=./addons/data/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=1 name=core path=./addons/core/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=2 name=profile path=/home/steam/armaservermanager/servers/REFORGER/profiles/7/profile/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=3 name=logs path=/home/steam/armaservermanager/servers/REFORGER/profiles/7/logs/logs_2026-09-02_00-22-57/resourceDatabase.rdb)
+ENGINE       : GameProject load
+ ENGINE       : Loaded addons:
+  ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C'
+  ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859'
+ENGINE       : Loading custom engine user config '$profile:.save/settings/ReforgerEngineSettings.conf'
+ENGINE       : No Enfusion settings file loaded. Continuing with defaults
+RENDER       : Basic screen setup:
+RENDER       :   Back buffer width x height: 0x0
+RENDER       :   Back buffer format	       : TEXFMT_UNKNOWN (0)
+RENDER       :   MSAA                      : none
+RENDER       : GPU_DUMMY (0xFFFF) (Enfusion dummy render) with 1 GPU detected, VRAM 128MB (fast 128MB), shared 128MB, driver version Unknown version
+RENDER       : Detected output devices:
+RENDER       :  * 1 device/s connected to Dummy:
+RENDER       :    Dummy output (Dummy device for our dummy render.), 1920x1080 (offset 0x0), 60Hz
+RENDER       :   Concurrent frames limit 2
+ENGINE       : Job system settings: coreCount=6, shortJobContextCount=6, shortJobThreadCount=5, longJobThreadCount=2
+PROFILING    : Settings changed took: 0.015000 ms
+ENGINE       : Initializing inputs.
+NETWORK      : Initializing networking.
+NETWORK      : Using new GameRplScheduler.
+ SCRIPT       : SCRIPT       : Initializing scripts
+  SCRIPT       : SCRIPT       : ScriptProjectManager init
+ PROFILING    : ScriptProjectManager init took: 0.006000 ms
+PROFILING    : Initializing scripts took: 11.725000 ms
+ENGINE       : Enfusion engine successfully created.
+GUI          : Using default language (en_us)
+GUI          : Loading 'en_us' localization file.
+ INIT         : INIT         : Loading StringTable
+PROFILING    : Loading StringTable took: 23.071000 ms
+ SCRIPT       : SCRIPT       : Compiling GameLib scripts
+ SCRIPT       : Module: GameLib; loaded 465x files; 607x classes; used 654K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_VHC_OVERRIDE,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE"; CRC32: 4507af04
+PROFILING    : Compiling GameLib scripts took: 21.929000 ms
+ SCRIPT       : SCRIPT       : Compiling Game scripts
+ SCRIPT       : Module: Game; loaded 5660x files; 10996x classes; used 25470K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_VHC_OVERRIDE,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE,ENABLE_BASE_DESTRUCTION,BUDGET_OPTIMIZATION_CHECKS,DEBUG,RESPAWN_TIMER_COMPONENT_DEBUG,DEBUG_CONFIGURABLE_DIALOGS,DISABLE_WEAPON_SWITCHING,SCRIPTED_AIM_MODIFIER_DEBUG"; CRC32: c400e126
+PROFILING    : Compiling Game scripts took: 1049.928000 ms
+INIT         : Creating game instance(ArmaReforgerScripted), version 1.8.0.10 built 2026-07-31 15:18:14 UTC.
+BACKEND      : Loading dedicated server config.
+ BACKEND      : Server config loaded.
+ BACKEND      : JSON Schema Validation:
+  BACKEND      : JSON is Valid
+ENGINE       : Game successfully created.
+BACKEND      : Attempting online Game Config instead.
+PLATFORM     : Save data from container 'settings' have been loaded
+PLATFORM     : Save data from container 'sessions' have been loaded
+PLATFORM     : System language differs from the saved one - using new language {new: 'en_us'; old: ''}
+PLATFORM     : Save data transaction to 'settings' started.
+NETWORK      : Starting dedicated server using command line args.
+BACKEND      : Addon Download started 62E960A6A1BA0985 - CO-OP Conflict PVE
+BACKEND      : Downloading 62E960A6A1BA0985 version 1.0.3
+BACKEND      : Download
+ BACKEND      : Downloading 1 addons:
+ BACKEND      : CO-OP Conflict PVE: [>___________________] 0% 0/0 MB
+ BACKEND      : Download speed 1.64 KB/s
+BACKEND      : Addon Download started 61B514B96692C049 - ConflictPVERemixedVanilla2.0
+BACKEND      : Downloading 61B514B96692C049 version 2.6.7
+BACKEND      : Addon Download started 6294F6D5EDD5CA66 - Ronin AI
+BACKEND      : Downloading 6294F6D5EDD5CA66 version 1.0.27
+BACKEND      : Required addons are ready to use.
+ENGINE       : Game destroyed.
+ENGINE       : Addon dirs:
+ ENGINE       : dir: './addons'
+ ENGINE       : dir: '/home/steam/armaservermanager/servers/REFORGER/profiles/7/addons'
+ ENGINE       : dir: '/home/steam/armaservermanager/mods/reforger/addons/'
+ENGINE       : Available addons:
+ ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859' (packed)
+ ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_CORE_5EB139459EBF5C16/addon.gproj' guid: '5EB139459EBF5C16' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack02_BADC0DEDABBEDA5E/addon.gproj' guid: 'BADC0DEDABBEDA5E' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_CORE_Pack2_61B8FA7B3BF8656B/addon.gproj' guid: '61B8FA7B3BF8656B' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack01_1337C0DE5DABBEEF/addon.gproj' guid: '1337C0DE5DABBEEF' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_RHIB_6934F9C61CE24DE5/addon.gproj' guid: '6934F9C61CE24DE5' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/CO-OPConflictPVE_62E960A6A1BA0985/addon.gproj' guid: '62E960A6A1BA0985' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_Polar_Dagor_A1_4x4_69349A7537394F8D/addon.gproj' guid: '69349A7537394F8D' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/ConflictPVERemixedVanilla2.0_61B514B96692C049/addon.gproj' guid: '61B514B96692C049' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RoninAI_6294F6D5EDD5CA66/addon.gproj' guid: '6294F6D5EDD5CA66' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_Kingmaker_6576A4DF3F71360C/addon.gproj' guid: '6576A4DF3F71360C' (packed)
+ ENGINE       : ENGINE       : GameProject load
+ INIT         : GameProject load project data @"/home/steam/armaservermanager/mods/reforger/addons/RHS-StatusQuo_595F2BF2F44836FB/addon.gproj"
+  RESOURCES (E): Wrong GUID/name for resource @"{0AFDD005CD669892}Language/rhs_localization.st" in property "StringTableSource"
+SCRIPT       : Compiling Game scripts
+ SCRIPT    (W): @"Scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,785": 'GetPlayerPlatformKind' is obsolete
+ SCRIPT    (W): @"Scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,786": 'GetPlayerPlatformId' is obsolete
+ SCRIPT    (E): @"Scripts/Game/Entities/SCUB_AIGroup.c,60": Too many parameters for 'RequestRemoveAgent' method
+ SCRIPT    (E): @"Scripts/Game/Plugins/Persistence/System/Serializers/Entities/SCR_FactionManagerSerializer.c,26": Error in parameters
+ SCRIPT    (E): @"Scripts/Game/Plugins/Persistence/System/Serializers/Entities/SCR_FactionManagerSerializer.c,29": Can't find variable 'friendlyDefaultMapping'
+ SCRIPT    (E): @"Scripts/Game/Plugins/Persistence/System/Serializers/Entities/SCR_FactionManagerSerializer.c,42": Can't find variable 'friendlyDefaultMapping'
+ SCRIPT    (E): @"Scripts/Game/Plugins/Persistence/System/Serializers/Entities/SCR_FactionManagerSerializer.c,52": Can't find variable 'friendlyDefaultMapping'
+ SCRIPT    (E): @"Scripts/Game/Plugins/Persistence/System/Serializers/Entities/SCR_FactionManagerSerializer.c,77": Can't find variable 'friendlyDefaultMapping'
+ SCRIPT    (E): @"Scripts/Game/Plugins/Persistence/System/Serializers/Entities/SCR_FactionManagerSerializer.c,77": Syntax error
+ SCRIPT    (E): @"Scripts/Game/Components/Locations/FRF_AmbientPatrolSpawnPointComponent.c,60": Can't find variable 'm_bGroupActive'
+ SCRIPT    (E): @"Scripts/Game/Components/Locations/FRF_AmbientPatrolSpawnPointComponent.c,132": Can't find variable 'm_bGroupActive'
+ SCRIPT    (E): @"Scripts/Game/Components/Locations/FRF_AmbientPatrolSpawnPointComponent.c,294": Can't find variable 'm_bGroupActive'
+ SCRIPT    (E): @"Scripts/Game/Components/Locations/FRF_AmbientPatrolSpawnPointComponent.c,327": Can't find variable 'm_iMembersAlive'
+ SCRIPT    (E): @"Scripts/Game/Components/Locations/FRF_AmbientPatrolSpawnPointComponent.c,328": Can't find variable 'm_iMembersAlive'
+ SCRIPT    (E): @"Scripts/Game/Respawn/Logic/SCR_SpawnLogic.c,298": Can't find class Tuple1
+ SCRIPT    (E): @"Scripts/Game/GameMode/Loadout/SCR_PlayerArsenalLoadout.c,324": Error in parameters
+ SCRIPT    (E): @"Scripts/Game/GameMode/Loadout/SCR_PlayerArsenalLoadout.c,333": Can't find variable 'sortSlots'
+ SCRIPT    (E): @"Scripts/Game/GameMode/Loadout/SCR_PlayerArsenalLoadout.c,335": Can't find variable 'sortSlots'
+ SCRIPT    (E): @"Scripts/Game/GameMode/Loadout/SCR_PlayerArsenalLoadout.c,337": Can't find variable 'sortSlots'
+ SCRIPT    (E): @"Scripts/Game/GameMode/Loadout/SCR_PlayerArsenalLoadout.c,337": Syntax error
+ SCRIPT    (E): @"Scripts/Game/Map/ComponentsUI/SCR_MapUIElementContainer.c,443": Incompatible parameter 'on delete'
+ SCRIPT    (W): @"Scripts/Game/Workshop/SCR_AddonManager.c,876": 'GetRefCount' is obsolete: Will be removed
+ SCRIPT    (W): @"Scripts/Game/Campaign/SCR_PlayerProfileManagerComponent.c,142": 'PlayerData' is obsolete
+ SCRIPT    (E): @"Scripts/Game/GameMode/FRF_GameModeCampaign.c,61": Too many parameters for 'RequestAddAIAgent' method
+ SCRIPT    (W): @"Scripts/Game/UI/Backend/CareerBackend.c,159": 'GetDSSession' is obsolete
+ SCRIPT    (W): @"Scripts/Game/UI/Backend/CareerBackend.c,162": 'RoomID' is obsolete
+ SCRIPT    (W): @"Scripts/Game/UI/Backend/CareerBackend.c,197": 'GetDSSession' is obsolete
+ SCRIPT    (W): @"Scripts/Game/UI/Backend/CareerBackend.c,201": 'RoomID' is obsolete
+ SCRIPT    (E): @"Scripts/Game/ScenarioFramework/Actions/ActionGetters/SCR_ScenarioFrameworkGetCountEntitiesInTrigger.c,10": Can't find class SCR_ScenarioFrameworkParam
+ SCRIPT    (E): @"Scripts/Game/ScenarioFramework/Actions/ActionGetters/SCR_ScenarioFrameworkGetLastFinishedTaskLayer.c,11": Can't find class SCR_ScenarioFrameworkParam
+ SCRIPT    (W): @"Scripts/Game/DataCollection/SCR_DataCollectorComponent.c,481": 'GetStorage' is obsolete
+ SCRIPT    (W): @"Scripts/Game/DataCollection/SCR_DataCollectorComponent.c,483": 'GetOnlineWritePrivilege' is obsolete
+ SCRIPT    (W): @"Scripts/Game/Utilities/SCR_PlayerIdentityUtils.c,20": 'GetPlayerIdentityId' is obsolete
+ SCRIPT    (E): @"Scripts/Game/UI/Components/SCR_SpinningWidgetComponent.c,25": Can't find class SCR_SpinningWidgetAnimation
+ SCRIPT    (E): @"Scripts/Game/UI/Components/SCR_SpinningWidgetComponent.c,27": Can't find class SCR_SpinningWidgetAnimation
+ SCRIPT    (E): @"Scripts/Game/Groups/SCUB_GroupsManagerComponent.c,49": Undefined function 'SCR_ReconnectComponent.GetOnReconnect'
+ SCRIPT    (W): @"Scripts/Game/UI/Menu/MainMenuUI.c,643": 'GetNotifyCount' is obsolete: Will be substitued by Notification Api.
+ SCRIPT    (W): @"Scripts/Game/UI/Menu/MainMenuUI.c,645": 'GetNotifyItem' is obsolete: Will be substitued by Notification Api.
+ SCRIPT    (W): @"Scripts/Game/DataCollection/PlayerData/SCR_PlayerData.c,210": 'PlayerData' is obsolete
+ SCRIPT    (E): @"Scripts/Game/UI/Menu/ContentBrowser/Common/SCR_ScenarioUICommon.c,452": Can't find class Tuple2
+ SCRIPT    (E): @"Scripts/Game/UI/Menu/ContentBrowser/Common/SCR_ScenarioUICommon.c,517": Can't find class Tuple2
+ SCRIPT    (E): Can't compile "Game" script module!
+
+Scripts/Game/Entities/SCUB_AIGroup.c(60): Too many parameters for 'RequestRemoveAgent' method
+ SCRIPT    (W): Failed to load
+ENGINE    (E): Cannot create game!
+ENGINE    (E): Addon loading failed {62E960A6A1BA0985,595F2BF2F44836FB,61B514B96692C049,1337C0DE5DABBEEF,6294F6D5EDD5CA66,BADC0DEDABBEDA5E}
+gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_AiHelicopters-WCS_69A4D664A6284E06/addon.gproj' guid: '69A4D664A6284E06' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-StatusQuo_595F2BF2F44836FB/addon.gproj' guid: '595F2BF2F44836FB' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/BattleGen-HighCommand_615F07D39925670F/addon.gproj' guid: '615F07D39925670F' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_JustInTime_617B2ED33DE29156/addon.gproj' guid: '617B2ED33DE29156' (packed)
+ENGINE       : FileSystem: Adding package '/home/steam/armaservermanager/mods/reforger/addons/RHS-StatusQuo_595F2BF2F44836FB/' (pak count: 1) to filesystem under name RHS_Core
+ENGINE       : FileSystem: Adding package '/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack02_BADC0DEDABBEDA5E/' (pak count: 2) to filesystem under name RHS_Content_02
+ENGINE       : FileSystem: Adding package '/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack01_1337C0DE5DABBEEF/' (pak count: 4) to filesystem under name RHS_Content_01
+ENGINE       : FileSystem: Adding package '/home/steam/armaservermanager/mods/reforger/addons/CO-OPConflictPVE_62E960A6A1BA0985/' (pak count: 1) to filesystem under name CoopConflictPVE
+ENGINE       : FileSystem: Adding package '/home/steam/armaservermanager/mods/reforger/addons/RoninAI_6294F6D5EDD5CA66/' (pak count: 1) to filesystem under name RoninAI
+ENGINE       : FileSystem: Adding package '/home/steam/armaservermanager/mods/reforger/addons/ConflictPVERemixedVanilla2.0_61B514B96692C049/' (pak count: 1) to filesystem under name ConflictPVERemixedVanilla20
+ENGINE       : FileSystem: Adding package './addons/data/' (pak count: 6) to filesystem under name ArmaReforger
+ENGINE       : FileSystem: Adding package './addons/core/' (pak count: 1) to filesystem under name core
+RESOURCES    : ResourceDB: loading cache (id=0 name=RHS_Core path=/home/steam/armaservermanager/mods/reforger/addons/RHS-StatusQuo_595F2BF2F44836FB/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=1 name=RHS_Content_02 path=/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack02_BADC0DEDABBEDA5E/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=2 name=RHS_Content_01 path=/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack01_1337C0DE5DABBEEF/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=3 name=CoopConflictPVE path=/home/steam/armaservermanager/mods/reforger/addons/CO-OPConflictPVE_62E960A6A1BA0985/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=4 name=RoninAI path=/home/steam/armaservermanager/mods/reforger/addons/RoninAI_6294F6D5EDD5CA66/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=5 name=ConflictPVERemixedVanilla20 path=/home/steam/armaservermanager/mods/reforger/addons/ConflictPVERemixedVanilla2.0_61B514B96692C049/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=6 name=ArmaReforger path=./addons/data/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=7 name=core path=./addons/core/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=8 name=profile path=/home/steam/armaservermanager/servers/REFORGER/profiles/7/profile/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=9 name=logs path=/home/steam/armaservermanager/servers/REFORGER/profiles/7/logs/logs_2026-09-02_00-22-57/resourceDatabase.rdb)
+ENGINE       : GameProject load
+ ENGINE       : Loaded addons:
+  ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C'
+  ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859'
+  ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/ConflictPVERemixedVanilla2.0_61B514B96692C049/addon.gproj' guid: '61B514B96692C049'
+  ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RoninAI_6294F6D5EDD5CA66/addon.gproj' guid: '6294F6D5EDD5CA66'
+  ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/CO-OPConflictPVE_62E960A6A1BA0985/addon.gproj' guid: '62E960A6A1BA0985'
+  ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack01_1337C0DE5DABBEEF/addon.gproj' guid: '1337C0DE5DABBEEF'
+  ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack02_BADC0DEDABBEDA5E/addon.gproj' guid: 'BADC0DEDABBEDA5E'
+  ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-StatusQuo_595F2BF2F44836FB/addon.gproj' guid: '595F2BF2F44836FB'
+GUI          : Using default language (en_us)
+GUI          : Loading 'en_us' localization file.
+ INIT         : INIT         : Loading StringTable
+PROFILING    : Loading StringTable took: 15.710000 ms
+ SCRIPT       : SCRIPT       : Compiling GameLib scripts
+ SCRIPT       : Module: GameLib; loaded 465x files; 607x classes; used 652K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_VHC_OVERRIDE,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE"; CRC32: 4507af04
+PROFILING    : Compiling GameLib scripts took: 19.371000 ms
+ SCRIPT       : SCRIPT       : Compiling Game scripts
+PROFILING    : Compiling Game scripts took: 1063.568000 ms
+ENGINE       : Game destroyed.
+ENGINE       : Addon dirs:
+ ENGINE       : dir: './addons'
+ ENGINE       : dir: '/home/steam/armaservermanager/servers/REFORGER/profiles/7/addons'
+ ENGINE       : dir: '/home/steam/armaservermanager/mods/reforger/addons/'
+ENGINE       : Available addons:
+ ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859' (packed)
+ ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_CORE_5EB139459EBF5C16/addon.gproj' guid: '5EB139459EBF5C16' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack02_BADC0DEDABBEDA5E/addon.gproj' guid: 'BADC0DEDABBEDA5E' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_CORE_Pack2_61B8FA7B3BF8656B/addon.gproj' guid: '61B8FA7B3BF8656B' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-ContentPack01_1337C0DE5DABBEEF/addon.gproj' guid: '1337C0DE5DABBEEF' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_RHIB_6934F9C61CE24DE5/addon.gproj' guid: '6934F9C61CE24DE5' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/CO-OPConflictPVE_62E960A6A1BA0985/addon.gproj' guid: '62E960A6A1BA0985' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_Polar_Dagor_A1_4x4_69349A7537394F8D/addon.gproj' guid: '69349A7537394F8D' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/ConflictPVERemixedVanilla2.0_61B514B96692C049/addon.gproj' guid: '61B514B96692C049' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RoninAI_6294F6D5EDD5CA66/addon.gproj' guid: '6294F6D5EDD5CA66' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_Kingmaker_6576A4DF3F71360C/addon.gproj' guid: '6576A4DF3F71360C' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_AiHelicopters-WCS_69A4D664A6284E06/addon.gproj' guid: '69A4D664A6284E06' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/RHS-StatusQuo_595F2BF2F44836FB/addon.gproj' guid: '595F2BF2F44836FB' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/BattleGen-HighCommand_615F07D39925670F/addon.gproj' guid: '615F07D39925670F' (packed)
+ ENGINE       : gproj: '/home/steam/armaservermanager/mods/reforger/addons/REAPER_JustInTime_617B2ED33DE29156/addon.gproj' guid: '617B2ED33DE29156' (packed)
+ENGINE       : FileSystem: Adding package './addons/data/' (pak count: 6) to filesystem under name ArmaReforger
+ENGINE       : FileSystem: Adding package './addons/core/' (pak count: 1) to filesystem under name core
+RESOURCES    : ResoSCRIPT       : Compiling Game scripts
+ SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,785": 'GetPlayerPlatformKind' is obsolete
+ SCRIPT    (W): @"scripts/Game/Editor/Components/EditableEntity/SCR_EditableEntityComponent.c,786": 'GetPlayerPlatformId' is obsolete
+ SCRIPT    (W): @"scripts/Game/Workshop/SCR_AddonManager.c,876": 'GetRefCount' is obsolete: Will be removed
+ SCRIPT    (W): @"scripts/Game/Campaign/SCR_PlayerProfileManagerComponent.c,142": 'PlayerData' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,159": 'GetDSSession' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,162": 'RoomID' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,197": 'GetDSSession' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Backend/CareerBackend.c,201": 'RoomID' is obsolete
+ SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,481": 'GetStorage' is obsolete
+ SCRIPT    (W): @"scripts/Game/DataCollection/SCR_DataCollectorComponent.c,483": 'GetOnlineWritePrivilege' is obsolete
+ SCRIPT    (W): @"scripts/Game/Utilities/SCR_PlayerIdentityUtils.c,20": 'GetPlayerIdentityId' is obsolete
+ SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,643": 'GetNotifyCount' is obsolete: Will be substitued by Notification Api.
+ SCRIPT    (W): @"scripts/Game/UI/Menu/MainMenuUI.c,645": 'GetNotifyItem' is obsolete: Will be substitued by Notification Api.
+ SCRIPT    (W): @"scripts/Game/DataCollection/PlayerData/SCR_PlayerData.c,210": 'PlayerData' is obsolete
+ENGINE    (E): Unable to initialize the game
+RESOURCES (E): ==== Resource leaks ====
+RESOURCES (E): ui/fonts/robotomono_msdf_28.edds   1
+urceDB: loading cache (id=0 name=ArmaReforger path=./addons/data/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=1 name=core path=./addons/core/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=2 name=profile path=/home/steam/armaservermanager/servers/REFORGER/profiles/7/profile/resourceDatabase.rdb)
+RESOURCES    : ResourceDB: loading cache (id=3 name=logs path=/home/steam/armaservermanager/servers/REFORGER/profiles/7/logs/logs_2026-09-02_00-22-57/resourceDatabase.rdb)
+ENGINE       : GameProject load
+ ENGINE       : Loaded addons:
+  ENGINE       : gproj: './addons/core/core.gproj' guid: '5614BBCCBB55ED1C'
+  ENGINE       : gproj: './addons/data/ArmaReforger.gproj' guid: '58D0FB3206B6F859'
+GUI          : Using default language (en_us)
+GUI          : Loading 'en_us' localization file.
+ INIT         : INIT         : Loading StringTable
+PROFILING    : Loading StringTable took: 13.555000 ms
+ SCRIPT       : SCRIPT       : Compiling GameLib scripts
+ SCRIPT       : Module: GameLib; loaded 465x files; 607x classes; used 652K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_VHC_OVERRIDE,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE"; CRC32: 4507af04
+PROFILING    : Compiling GameLib scripts took: 19.290000 ms
+ SCRIPT       : SCRIPT       : Compiling Game scripts
+ SCRIPT       : Module: Game; loaded 5660x files; 10996x classes; used 25445K of static memory; defines: "PLATFORM_LINUX,ENF_ENABLE_VHC_OVERRIDE,ENF_ENABLE_RPLCOMPONENT_IN_GAMECODE,ENABLE_BASE_DESTRUCTION,BUDGET_OPTIMIZATION_CHECKS,DEBUG,RESPAWN_TIMER_COMPONENT_DEBUG,DEBUG_CONFIGURABLE_DIALOGS,DISABLE_WEAPON_SWITCHING,SCRIPTED_AIM_MODIFIER_DEBUG"; CRC32: c400e126
+PROFILING    : Compiling Game scripts took: 1001.679000 ms
+INIT         : Creating game instance(ArmaReforgerScripted), version 1.8.0.10 built 2026-07-31 15:18:14 UTC.
+BACKEND      : Loading dedicated server config.
+ BACKEND      : Server config loaded.
+ BACKEND      : JSON Schema Validation:
+  BACKEND      : JSON is Valid
+SCRIPT       : Unable to register a script command due keyword duplicity: ban
+SCRIPT       : Unable to register a script command due keyword duplicity: kick
+ENGINE       : Game successfully created.
+ENGINE       : Game destroyed.

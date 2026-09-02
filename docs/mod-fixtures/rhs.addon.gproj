@@ -1,0 +1,43 @@
+GameProject {
+ ID "RHS_Core"
+ GUID "595F2BF2F44836FB"
+ TITLE "RHS: Status Quo"
+   Dependencies {
+  "58D0FB3206B6F859"
+  "1337C0DE5DABBEEF"
+  "BADC0DEDABBEDA5E"
+ }
+ Configurations {
+  GameProjectConfig PC {
+   WidgetManagerSettings WidgetManagerSettings "{AC4BE58770485E02}" {
+    StringTables {
+     StringTableDefinition "{596B2EF73524D9C7}" {
+      StringTableSource "{0AFDD005CD669892}Language/rhs_localization.st"
+      Languages {
+       LanguageDefinition "{596B2EF73C709482}" {
+        Code "en_us"
+        StringTableRuntime "{961FD3B73AAAC2E9}Language/rhs_localization.en_us.conf"
+       }
+       LanguageDefinition "{59D871C4B0CDD7EB}" {
+        Code "ru_ru"
+        StringTableRuntime "{0405599D2A3DC929}Language/rhs_localization.ru_ru.conf"
+       }
+       LanguageDefinition "{5F18E3DE1C8BA657}" {
+        Code "pl_pl"
+        StringTableRuntime "{8433D7F98CBA66E5}Language/rhs_localization.pl_pl.conf"
+       }
+      }
+     }
+    }
+   }
+  }
+  GameProjectConfig XBOX_ONE {
+  }
+  GameProjectConfig XBOX_SERIES {
+  }
+  GameProjectConfig PS4 {
+  }
+  GameProjectConfig HEADLESS {
+  }
+ }
+}

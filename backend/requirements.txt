@@ -1,0 +1,27 @@
+# Reforger Manager backend — Python dependencies
+
+fastapi==0.118.0
+uvicorn[standard]==0.34.0
+sqlalchemy[asyncio]>=2.0.36,<2.1
+asyncpg==0.30.0
+alembic==1.14.0
+pydantic-settings==2.7.1
+
+# Auth: python-jose for HS256 JWT; bcrypt used directly (no passlib).
+# passlib 1.7.4 breaks against bcrypt 4.x (reads the removed __about__), so it is
+# dropped rather than pinned around.
+python-jose[cryptography]==3.3.0
+bcrypt==4.2.1
+
+# HTTP client (api.steamcmd.net engine-build lookup; Phase 3 Workshop API).
+httpx==0.28.1
+
+websockets==14.1
+python-multipart==0.0.20
+
+# Local dev / import-checks / Alembic against SQLite. Tiny; harmless in the image.
+aiosqlite==0.20.0
+
+# Test suite (backend/tests/). Dev-only; harmless in the image.
+pytest==8.3.4
+pytest-asyncio==0.25.2

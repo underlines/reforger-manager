@@ -1,0 +1,32 @@
+# Local development overrides — Docker Compose merges this on top of
+# docker-compose.yml automatically (no -f needed).
+#
+# vs. the base file:
+#
+#   1. Networking. The base uses `network_mode: host` so spawned Reforger game
+#      servers bind host UDP ports directly. Where host networking is unavailable
+#      or unreliable (e.g. Docker Desktop), run the manager on the default bridge
+#      with only the web UI/API port published, reaching Postgres via
+#      host.docker.internal (the db still publishes 127.0.0.1:5432).
+#
+#      This exercises everything except a LAN-joinable game server: UI, API, DB,
+#      mod downloads, pre-flight, engine-build tracking, steamcmd install. To run
+#      a real game server, use the base file only:
+#          docker compose -f docker-compose.yml up -d
+#
+#   2. DATABASE_URL is rebuilt to point at host.docker.internal instead of the
+#      `localhost` in .env (a bridged container has no host loopback).
+#
+# Persistent data still follows ${DATA_DIR:-./data} from the base file.
+
+services:
+  reforger-manager:
+    network_mode: bridge
+    ports:
+      - "${WEB_PORT:-18090}:18090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Built from the POSTGRES_* values in .env; the password must be URL-safe
+      # (see .env.example).
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@host.docker.internal:5432/${POSTGRES_DB}

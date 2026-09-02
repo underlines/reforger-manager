@@ -1,0 +1,10 @@
+# Keep LF on files that run inside the Linux container / are format-sensitive.
+# A CRLF entrypoint.sh breaks with "bad interpreter" at container start.
+*.sh            text eol=lf
+docker/entrypoint.sh text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.py            text eol=lf
+*.env           text eol=lf
+.env.example    text eol=lf

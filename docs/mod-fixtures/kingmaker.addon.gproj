@@ -1,0 +1,22 @@
+GameProject {
+ ID "REAPER_Kingmaker"
+ GUID "6576A4DF3F71360C"
+ TITLE "REAPER_Kingmaker"
+ Dependencies {
+  "69349A7537394F8D" "5EB139459EBF5C16" "58D0FB3206B6F859" "69A4D664A6284E06"
+ }
+ Configurations {
+  GameProjectConfig PC {
+  }
+  GameProjectConfig XBOX_ONE {
+  }
+  GameProjectConfig XBOX_SERIES {
+  }
+  GameProjectConfig PS4 {
+  }
+  GameProjectConfig PS5 {
+  }
+  GameProjectConfig HEADLESS {
+  }
+ }
+}
