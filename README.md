@@ -103,6 +103,75 @@ return HTTP 409 while that server definition is the one currently running —
 stop it first. There is no automatic backup or version history on overwrite; a
 bad edit is only recoverable from NAS-side ZFS snapshots of the bind mount.
 
+## Connect an agent
+
+The manager exposes its administration surface as MCP tools over Streamable
+HTTP at `/mcp`. The tool layer is a thin, authenticated adapter: every tool
+calls this instance's own REST API in-process (same DI, job manager, 409s and
+single-server rule as the webui), so the webui and an agent can never diverge.
+The surface is the REST verbs mirrored 1:1 plus three read-only composites —
+`server_overview` (one-shot situation report), `tail_log` (console tail) and
+`wait_for_job` (poll a background job to its terminal state). Every
+state-changing tool takes a `confirm` flag that defaults to `false` and refuses
+to run without it; job-returning tools answer with a job id for `wait_for_job`.
+
+1. **Create a token** — webui → Settings → "MCP Tokens" → create. Give it a
+   label (e.g. the machine or agent); the raw `rfm_...` value is shown exactly
+   once and only its sha256 hash is stored. Revoke from the same card. Tokens
+   are full admin — treat them like the webui password.
+2. **Claude Code** (CLI):
+
+   ```bash
+   claude mcp add --transport http reforger-manager https://<host>/mcp \
+     --header "Authorization: Bearer rfm_<redacted>"
+   ```
+
+   or in `.mcp.json` / the agent's `mcpServers` config:
+
+   ```json
+   {
+     "mcpServers": {
+       "reforger-manager": {
+         "type": "http",
+         "url": "https://<host>/mcp",
+         "headers": {
+           "Authorization": "Bearer rfm_<redacted>"
+         }
+       }
+     }
+   }
+   ```
+
+3. **opencode** (`opencode.json`):
+
+   ```json
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "mcp": {
+       "reforger-manager": {
+         "type": "remote",
+         "url": "https://<host>/mcp",
+         "enabled": true,
+         "headers": {
+           "Authorization": "Bearer rfm_<redacted>"
+         }
+       }
+     }
+   }
+   ```
+
+4. **Codex** (`~/.codex/config.toml`):
+
+   ```toml
+   [mcp_servers.reforger-manager]
+   url = "https://<host>/mcp"
+   http_headers = { "Authorization" = "Bearer rfm_<redacted>" }
+   ```
+
+**Reverse proxy note.** `/mcp` responses are streamed (SSE); a proxy in front
+of the manager must not buffer them (nginx: `proxy_buffering off` for this
+location, or an `X-Accel-Buffering: no` response header).
+
 ## Deploying
 
 `docker-compose.yml` is the deployment file: `network_mode: host` (Reforger needs

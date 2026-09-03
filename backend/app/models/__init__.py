@@ -12,6 +12,7 @@ from .base import (
 )
 from .engine import ENGINE_SINGLETON_ID, Engine
 from .job import Job
+from .mcp_token import McpToken
 from .mod import Mod, ModDependency, ModScenario
 from .modpack import Modpack, ModpackItem
 from .server import Server, ServerConfigRevision, ServerMod
@@ -28,6 +29,7 @@ __all__ = [
     "Engine",
     "ENGINE_SINGLETON_ID",
     "Job",
+    "McpToken",
     "Mod",
     "ModDependency",
     "ModScenario",

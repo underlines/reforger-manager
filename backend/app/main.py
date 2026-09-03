@@ -27,12 +27,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Route
 from sqlalchemy import func, select
 
 from .api import auth as auth_api
 from .api import engine as engine_api
 from .api import health as health_api
 from .api import jobs as jobs_api
+from .api import mcp_tokens as mcp_tokens_api
 from .api import mods as mods_api
 from .api import modpacks as modpacks_api
 from .api import servers as servers_api
@@ -60,6 +62,8 @@ from .mods.updates import (
 )
 from .mods.verify import VERIFY_REPAIR_JOB_KIND, run_verify_repair
 from .mods.workshop import workshop as workshop_client
+from .mcp import mcp as mcp_server
+from .mcp import mcp_app
 from .servers.supervisor import supervisor
 from .steam.engine import refresh_engine, seed_engine
 from .steam.steamcmd import install_or_update
@@ -259,7 +263,11 @@ async def lifespan(app: FastAPI):
 
     logger.info("Reforger Manager backend ready")
     try:
-        yield
+        # The MCP session manager's task group must be entered exactly once per
+        # process; Starlette does not propagate lifespan events to mounts, so
+        # the /mcp mount cannot start it itself.
+        async with mcp_server.session_manager.run():
+            yield
     finally:
         if nightly_scheduler is not None:
             await nightly_scheduler.stop()
@@ -285,6 +293,7 @@ app.include_router(health_api.router, prefix=_API)
 app.include_router(auth_api.router, prefix=_API)
 app.include_router(engine_api.router, prefix=_API)
 app.include_router(jobs_api.router, prefix=_API)
+app.include_router(mcp_tokens_api.router, prefix=_API)
 app.include_router(mods_api.router, prefix=_API)
 app.include_router(modpacks_api.router, prefix=_API)
 app.include_router(servers_api.router, prefix=_API)
@@ -293,6 +302,13 @@ app.include_router(settings_api.router, prefix=_API)
 app.include_router(storage_api.router, prefix=_API)
 app.include_router(scenarios_api.router, prefix=_API)
 app.include_router(backup_api.router, prefix=_API)
+
+# MCP server (sprint 4): streamable-HTTP transport at <host>/mcp, bearer-token
+# gated. A plain Route (not a Mount): Starlette Mount paths compile to
+# "<path>/{path}", so Mount("/mcp") matches "/mcp/..." but never the exact
+# "/mcp" URL MCP clients use. Registered with the routers, ahead of the SPA
+# catch-all (fact #1).
+app.router.routes.append(Route("/mcp", mcp_app(), include_in_schema=False))
 
 
 # Phase 4 mounts the built SPA here. Guarded so it is a no-op until frontend/dist
@@ -307,7 +323,7 @@ if _SPA_DIR.is_dir():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa(full_path: str) -> FileResponse:
-        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi"):
+        if full_path.startswith(("api", "docs", "openapi", "mcp")):
             raise HTTPException(status_code=404, detail="Not Found")
         candidate = (_SPA_DIR / full_path).resolve()
         if full_path and candidate.is_file() and _SPA_DIR.resolve() in candidate.parents:

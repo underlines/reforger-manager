@@ -3,6 +3,7 @@ import { AppearanceCard } from "../components/settings/AppearanceCard";
 import { BackupCard } from "../components/settings/BackupCard";
 import { EngineCard } from "../components/settings/EngineCard";
 import { HealthCard } from "../components/settings/HealthCard";
+import { McpTokensCard } from "../components/settings/McpTokensCard";
 import { NightlyCard } from "../components/settings/NightlyCard";
 import { PasswordCard } from "../components/settings/PasswordCard";
 import { SessionCard } from "../components/settings/SessionCard";
@@ -20,6 +21,7 @@ export function SettingsPage() {
         <AppearanceCard />
         <NightlyCard />
         <PasswordCard />
+        <McpTokensCard />
         <EngineCard />
         <HealthCard />
         <SpamPatternsCard />
