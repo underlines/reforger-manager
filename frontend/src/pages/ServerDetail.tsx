@@ -4,13 +4,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import { PageHeading } from "../components/PageHeading";
 import { ConsolePanel } from "../components/server/ConsolePanel";
 import { ConfigPanel } from "../components/server/ConfigPanel";
+import { FilesPanel } from "../components/server/FilesPanel";
 import { HistoryPanel } from "../components/server/HistoryPanel";
 import { ModsPanel } from "../components/server/ModsPanel";
 import { PlayersPanel } from "../components/server/PlayersPanel";
 import { Badge, Button, Card, CardContent, Dialog, Input } from "../components/ui";
 import { api, apiClient, type DetailServer, type Server } from "../lib/api";
 
-const tabs = ["Config", "Mods", "Console", "Players", "History"] as const;
+const tabs = ["Config", "Mods", "Files", "Console", "Players", "History"] as const;
 type Tab = (typeof tabs)[number];
 
 export function ServerDetailPage() {
@@ -144,6 +145,7 @@ export function ServerDetailPage() {
         <CardContent>
           {tab === "Config" && <ConfigPanel id={id} server={server} />}
           {tab === "Mods" && <ModsPanel id={id} server={server} action={action} run={run} />}
+          {tab === "Files" && <FilesPanel id={id} server={server} />}
           {tab === "Console" && <ConsolePanel id={id} />}
           {tab === "Players" && <PlayersPanel id={id} />}
           {tab === "History" && <HistoryPanel id={id} />}

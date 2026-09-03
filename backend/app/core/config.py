@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     # counts) longer than this. 0 disables it.
     job_max_runtime_seconds: int = 60 * 60
     job_watchdog_interval_seconds: int = 60
+    # Profile file manager: a file at or under this many bytes is eligible for
+    # the text/JSON editor; anything larger is download-only.
+    files_max_edit_bytes: int = 2_097_152
+    # Profile file manager: a single uploaded file larger than this is rejected.
+    files_max_upload_bytes: int = 50_000_000
     # Explicit allow-list (S19 / PLAN G33). The SPA is served same-origin by
     # FastAPI, so this only affects the Vite dev server and any stray
     # cross-origin caller. Keep localhost:5173 or `npm run dev` breaks; add any

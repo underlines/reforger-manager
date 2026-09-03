@@ -135,3 +135,7 @@ Keep every `data/*/.gitkeep`.
 - **Single-server rule** — the supervisor runs at most one server definition at a
   time, by design; engine update / verify are blocked while one runs.
 - **Never commit `data/` or `.env`** (both gitignored).
+- **Profile files are editable via the UI Files tab** (`PROFILES_DIR/{id}/`),
+  but `CONFIGS_DIR/{id}.json` is regenerated from the DB by `supervisor.start`
+  on every server start — a hand-edit there is silently clobbered, which is why
+  the Files tab shows it read-only.

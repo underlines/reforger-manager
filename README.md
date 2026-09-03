@@ -87,6 +87,22 @@ blocked while a server runs.
   `gameVersion` mismatch, which pins went stale (held against a build that is no
   longer installed).
 
+## Profile files
+
+A "Files" tab on each server's detail page browses and edits that server
+definition's profile directory (`PROFILES_DIR/{id}/`) — list, view, whole-file
+text edit (with JSON parse-validation when the file ends in `.json`), upload,
+new folder, rename, recursive delete, per-file download, and "download all as
+.zip". It deliberately does **not** reach `SERVER_DIR` or `MODS_DIR` (engine /
+addon cache, steamcmd-owned), does not write `CONFIGS_DIR/{id}.json`
+(regenerated from the DB on every start — shown read-only), and hides `logs/`
+(use the Console/Log tab) and `addons_tmp/` (engine scratch).
+
+Reads and browsing are always allowed. Write, delete, mkdir, rename and upload
+return HTTP 409 while that server definition is the one currently running —
+stop it first. There is no automatic backup or version history on overwrite; a
+bad edit is only recoverable from NAS-side ZFS snapshots of the bind mount.
+
 ## Deploying
 
 `docker-compose.yml` is the deployment file: `network_mode: host` (Reforger needs

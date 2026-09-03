@@ -120,6 +120,27 @@ export type AppSettings = {
   log_spam_patterns: string[];
 };
 export type Stats = { current: Record<string, unknown>; history: Array<Record<string, unknown>> };
+export type FileEntry = {
+  name: string;
+  rel_path: string;
+  type: "file" | "dir" | "symlink";
+  size: number;
+  mtime: string | null;
+  is_text: boolean;
+  is_json: boolean;
+};
+export type DirListing = {
+  server_id: number;
+  path: string;
+  entries: FileEntry[];
+};
+export type FileContent = {
+  path: string;
+  size: number;
+  editable: boolean;
+  is_json: boolean;
+  content: string | null;
+};
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -158,6 +179,48 @@ export async function apiVoid(path: string, init: RequestInit = {}): Promise<voi
     if (response.status === 401) window.dispatchEvent(new Event("auth:expired"));
     throw new ApiError(response.status, payload?.detail ?? `Request failed (${response.status})`);
   }
+}
+
+/** Multipart upload (bypasses {@link api}, which is JSON-only). Field name is `files`. */
+export async function apiUpload<T>(path: string, files: File[]): Promise<T> {
+  const formData = new FormData();
+  for (const file of files) formData.append("files", file);
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getAccessToken()}` },
+    body: formData,
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    if (response.status === 401) window.dispatchEvent(new Event("auth:expired"));
+    throw new ApiError(response.status, payload?.detail ?? `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<T>;
+}
+
+/** Binary GET (bypasses {@link api}). Used for `/download` and `/archive`. */
+export async function apiBlob(path: string): Promise<Blob> {
+  const response = await fetch(path, {
+    headers: { Authorization: `Bearer ${getAccessToken()}` },
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    if (response.status === 401) window.dispatchEvent(new Event("auth:expired"));
+    throw new ApiError(response.status, payload?.detail ?? `Request failed (${response.status})`);
+  }
+  return response.blob();
+}
+
+/** Trigger a browser download of an in-memory blob. */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 export const apiClient = {
