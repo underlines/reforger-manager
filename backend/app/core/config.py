@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     reforger_binary_name: str = "ArmaReforgerServer"
     stop_grace_seconds: float = 20.0
     job_log_ring: int = 200
+    # Watchdog: auto-cancel a job that has been *running* (queued time never
+    # counts) longer than this. 0 disables it.
+    job_max_runtime_seconds: int = 60 * 60
+    job_watchdog_interval_seconds: int = 60
     # Explicit allow-list (S19 / PLAN G33). The SPA is served same-origin by
     # FastAPI, so this only affects the Vite dev server and any stray
     # cross-origin caller. Keep localhost:5173 or `npm run dev` breaks; add any

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Empty } from "../components/Empty";
 import { PageHeading } from "../components/PageHeading";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
-import { api, type Job, websocket } from "../lib/api";
+import { api, apiVoid, type Job, websocket } from "../lib/api";
 
 type JobRecord = Job & {
   params?: Record<string, unknown> | null;
@@ -18,6 +18,8 @@ type JobEvent = Partial<JobRecord> & { id: number; type?: "job" | "log"; last_li
 
 const MAX_LIVE_JOBS = 100;
 const states = ["queued", "running", "succeeded", "failed", "cancelled"];
+const TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
+const isTerminal = (state: string) => TERMINAL.has(state);
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : "Request failed");
 const label = (value: string) => value.replaceAll("_", " ");
@@ -49,6 +51,8 @@ export function JobsPage() {
   const [selected, setSelected] = useState<JobRecord | null>(null);
   const [liveJobs, setLiveJobs] = useState<Map<number, Partial<JobRecord>>>(new Map());
   const [streamConnected, setStreamConnected] = useState(false);
+  const [busy, setBusy] = useState<number | "prune" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const filters = new URLSearchParams();
   if (state !== "all") filters.set("state", state);
@@ -90,6 +94,63 @@ export function JobsPage() {
     };
   }, []);
 
+  const forget = (id: number) =>
+    setLiveJobs((current) => {
+      if (!current.has(id)) return current;
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
+
+  const cancelJob = async (id: number) => {
+    if (!window.confirm(`Cancel job #${id}? A running job is asked to stop and its work is abandoned.`)) return;
+    setBusy(id);
+    setActionError(null);
+    try {
+      await api(`/api/jobs/${id}/cancel`, { method: "POST" });
+      await jobsQuery.refetch();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeJob = async (id: number) => {
+    setBusy(id);
+    setActionError(null);
+    try {
+      await apiVoid(`/api/jobs/${id}`, { method: "DELETE" });
+      forget(id);
+      if (selected?.id === id) setSelected(null);
+      await jobsQuery.refetch();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const pruneFinished = async () => {
+    if (!window.confirm("Remove every succeeded, failed and cancelled job from the queue?")) return;
+    setBusy("prune");
+    setActionError(null);
+    try {
+      const { deleted } = await api<{ deleted: number }>("/api/jobs/prune", { method: "POST" });
+      setLiveJobs((current) => {
+        const next = new Map(current);
+        for (const [id, job] of current) if (job.state && isTerminal(job.state)) next.delete(id);
+        return next;
+      });
+      await jobsQuery.refetch();
+      if (deleted === 0) setActionError("No finished jobs to remove.");
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const jobs = new Map<number, JobRecord>();
   for (const job of jobsQuery.data ?? []) jobs.set(job.id, job);
   for (const [id, update] of liveJobs) {
@@ -128,12 +189,22 @@ export function JobsPage() {
             placeholder="Exact job kind, e.g. mod_sync"
             aria-label="Job kind filter"
           />
-          <div className="flex items-center gap-2 text-xs text-stone-400">
-            <span
-              className={`h-2 w-2 rounded-full ${streamConnected ? "bg-emerald-400" : "bg-stone-600"}`}
-              aria-hidden="true"
-            />
-            {streamConnected ? "Live updates" : "Polling every 5s"}
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-2 text-xs text-stone-400">
+              <span
+                className={`h-2 w-2 rounded-full ${streamConnected ? "bg-emerald-400" : "bg-stone-600"}`}
+                aria-hidden="true"
+              />
+              {streamConnected ? "Live updates" : "Polling every 5s"}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void pruneFinished()}
+              disabled={busy !== null || !visibleJobs.some((job) => isTerminal(job.state))}
+            >
+              {busy === "prune" ? "Clearing..." : "Clear finished"}
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -142,6 +213,7 @@ export function JobsPage() {
           <CardTitle>Recent Operations {visibleJobs.length ? `(${visibleJobs.length})` : ""}</CardTitle>
         </CardHeader>
         <CardContent>
+          {actionError && <p className="error mb-3">{actionError}</p>}
           {jobsQuery.isLoading && <p className="text-sm text-stone-400">Loading jobs...</p>}
           {jobsQuery.isError && (
             <div className="space-y-3">
@@ -157,7 +229,15 @@ export function JobsPage() {
           {visibleJobs.length ? (
             <div className="divide-y divide-stone-800">
               {visibleJobs.map((job) => (
-                <JobRow key={job.id} job={job} onOpen={() => setSelected(job)} />
+                <JobRow
+                  key={job.id}
+                  job={job}
+                  busy={busy === job.id}
+                  disabled={busy !== null}
+                  onOpen={() => setSelected(job)}
+                  onCancel={() => void cancelJob(job.id)}
+                  onRemove={() => void removeJob(job.id)}
+                />
               ))}
             </div>
           ) : null}
@@ -169,14 +249,34 @@ export function JobsPage() {
         onClose={() => setSelected(null)}
       >
         {selected && (
-          <JobDetail job={liveJobs.has(selected.id) ? { ...selected, ...liveJobs.get(selected.id) } : selected} />
+          <JobDetail
+            job={liveJobs.has(selected.id) ? { ...selected, ...liveJobs.get(selected.id) } : selected}
+            busy={busy === selected.id}
+            disabled={busy !== null}
+            onCancel={() => void cancelJob(selected.id)}
+            onRemove={() => void removeJob(selected.id)}
+          />
         )}
       </Dialog>
     </>
   );
 }
 
-function JobRow({ job, onOpen }: { job: JobRecord; onOpen: () => void }) {
+type JobActionProps = {
+  busy: boolean;
+  disabled: boolean;
+  onCancel: () => void;
+  onRemove: () => void;
+};
+
+function JobRow({
+  job,
+  busy,
+  disabled,
+  onOpen,
+  onCancel,
+  onRemove,
+}: { job: JobRecord; onOpen: () => void } & JobActionProps) {
   return (
     <article className="grid gap-3 py-4 md:grid-cols-[minmax(0,1fr)_10rem_auto]">
       <div className="min-w-0 space-y-2">
@@ -200,17 +300,32 @@ function JobRow({ job, onOpen }: { job: JobRecord; onOpen: () => void }) {
         </div>
       </div>
       <div className="self-center text-sm text-stone-300">{progress(job.progress)}</div>
-      <div className="flex items-center gap-2 md:justify-end">
+      <div className="flex flex-wrap items-center gap-2 md:justify-end">
         <Badge tone={toneFor(job.state)}>{job.state}</Badge>
         <Button size="sm" variant="ghost" onClick={onOpen}>
           Details
         </Button>
+        {isTerminal(job.state) ? (
+          <Button size="sm" variant="ghost" onClick={onRemove} disabled={disabled}>
+            {busy ? "Removing..." : "Remove"}
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" onClick={onCancel} disabled={disabled}>
+            {busy ? "Cancelling..." : "Cancel"}
+          </Button>
+        )}
       </div>
     </article>
   );
 }
 
-function JobDetail({ job }: { job: JobRecord }) {
+function JobDetail({
+  job,
+  busy,
+  disabled,
+  onCancel,
+  onRemove,
+}: { job: JobRecord } & JobActionProps) {
   const logs = job.log_tail?.map(String) ?? [];
   return (
     <div className="space-y-4 text-sm">
@@ -218,6 +333,17 @@ function JobDetail({ job }: { job: JobRecord }) {
         <Badge tone={toneFor(job.state)}>{job.state}</Badge>
         <span className="font-mono text-stone-400">#{job.id}</span>
         <span>{progress(job.progress)}</span>
+        <span className="ml-auto flex gap-2">
+          {isTerminal(job.state) ? (
+            <Button size="sm" variant="ghost" onClick={onRemove} disabled={disabled}>
+              {busy ? "Removing..." : "Remove"}
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" onClick={onCancel} disabled={disabled}>
+              {busy ? "Cancelling..." : "Cancel job"}
+            </Button>
+          )}
+        </span>
       </div>
       <div className="h-2 overflow-hidden bg-stone-800">
         <div className="h-full bg-amber-400" style={{ width: progress(job.progress) }} />

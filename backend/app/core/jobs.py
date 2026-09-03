@@ -71,9 +71,12 @@ class JobManager:
         self._logs: dict[int, deque] = {}
         self._last_flush: dict[int, float] = {}
         self._worker: asyncio.Task | None = None
+        self._watchdog: asyncio.Task | None = None
         self._current_job_id: int | None = None
         self._current_task: asyncio.Task | None = None
+        self._current_started: float | None = None  # time.monotonic() at "running"
         self._cancel_requested: set[int] = set()
+        self._cancel_reason: dict[int, str] = {}
 
     # ---------------------------------------------------------------- lifecycle
     def register(self, kind: str, factory: JobFactory) -> None:
@@ -83,16 +86,22 @@ class JobManager:
         await self._fail_orphans()
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._run(), name="job-worker")
+        if self._watchdog is None or self._watchdog.done():
+            self._watchdog = asyncio.create_task(
+                self._run_watchdog(), name="job-watchdog"
+            )
 
     async def stop(self) -> None:
-        if self._current_task and not self._current_task.done():
-            self._current_task.cancel()
-        if self._worker and not self._worker.done():
-            self._worker.cancel()
-            try:
-                await self._worker
-            except asyncio.CancelledError:
-                pass
+        for task in (self._watchdog, self._current_task, self._worker):
+            if task and not task.done():
+                task.cancel()
+        for task in (self._worker, self._watchdog):
+            if task and not task.done():
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._watchdog = None
 
     async def _fail_orphans(self) -> None:
         from ..models import Job, JobState
@@ -153,12 +162,18 @@ class JobManager:
         await self._queue.put(job_id)
         return job_id
 
-    async def request_cancel(self, job_id: int) -> bool:
-        """Best-effort cancel. Returns True if the job was running or queued."""
+    async def request_cancel(self, job_id: int, *, reason: str | None = None) -> bool:
+        """Best-effort cancel. Returns True if the job was running or queued.
+
+        ``reason`` is recorded on the row (``current_step``, and ``error`` for a
+        running job) so a watchdog timeout reads differently from a user cancel.
+        """
         from ..models import JobState
 
         if job_id == self._current_job_id:
             self._cancel_requested.add(job_id)
+            if reason:
+                self._cancel_reason[job_id] = reason
             if self._current_task and not self._current_task.done():
                 self._current_task.cancel()
             return True
@@ -168,7 +183,7 @@ class JobManager:
                 job_id,
                 state=JobState.cancelled,
                 finished_at=_utcnow(),
-                current_step="cancelled before start",
+                current_step=reason or "cancelled before start",
             )
             return True
         return False
@@ -186,6 +201,39 @@ class JobManager:
             finally:
                 self._queue.task_done()
 
+    async def _run_watchdog(self) -> None:
+        """Auto-cancel a job that has been *running* past the runtime cap.
+
+        Queued time is never counted — ``_current_started`` is set only when a
+        job goes ``running``.
+        """
+        interval = max(5, int(settings.job_watchdog_interval_seconds))
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                cap = int(settings.job_max_runtime_seconds)
+                if cap <= 0:
+                    continue
+                job_id = self._current_job_id
+                started = self._current_started
+                if job_id is None or started is None:
+                    continue
+                elapsed = time.monotonic() - started
+                if elapsed < cap or job_id in self._cancel_requested:
+                    continue
+                logger.warning(
+                    "job %s exceeded max runtime (%.0fs > %ds) — cancelling",
+                    job_id, elapsed, cap,
+                )
+                await self.request_cancel(
+                    job_id,
+                    reason=f"cancelled: exceeded max runtime of {cap}s",
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # pragma: no cover - defensive
+                logger.exception("job watchdog iteration failed")
+
     async def _execute(self, job_id: int) -> None:
         from ..models import JobState
 
@@ -194,6 +242,7 @@ class JobManager:
             return
 
         self._current_job_id = job_id
+        self._current_started = time.monotonic()
         ctx = JobContext(self, job_id)
         await self._mark(
             job_id,
@@ -207,11 +256,13 @@ class JobManager:
         try:
             result = await task
         except asyncio.CancelledError:
+            reason = self._cancel_reason.get(job_id, "cancelled")
             await self._mark(
                 job_id,
                 state=JobState.cancelled,
                 finished_at=_utcnow(),
-                current_step="cancelled",
+                current_step=reason,
+                error=reason if reason != "cancelled" else None,
             )
         except Exception as exc:
             logger.exception("job %s (%s) failed", job_id, factory)
@@ -223,8 +274,13 @@ class JobManager:
             )
         else:
             if job_id in self._cancel_requested:
+                reason = self._cancel_reason.get(job_id, "cancelled")
                 await self._mark(
-                    job_id, state=JobState.cancelled, finished_at=_utcnow()
+                    job_id,
+                    state=JobState.cancelled,
+                    finished_at=_utcnow(),
+                    current_step=reason,
+                    error=reason if reason != "cancelled" else None,
                 )
             else:
                 await self._mark(
@@ -238,7 +294,9 @@ class JobManager:
         finally:
             self._current_job_id = None
             self._current_task = None
+            self._current_started = None
             self._cancel_requested.discard(job_id)
+            self._cancel_reason.pop(job_id, None)
             self._last_flush.pop(job_id, None)
 
     # ------------------------------------------------------------- persistence

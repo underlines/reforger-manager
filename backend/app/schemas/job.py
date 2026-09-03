@@ -26,3 +26,17 @@ class JobOut(BaseModel):
 class JobEnqueuedOut(BaseModel):
     job_id: int
     kind: str
+
+
+class JobCancelOut(BaseModel):
+    job_id: int
+    cancelled: bool
+
+
+class JobPruneIn(BaseModel):
+    # Restricted to terminal states server-side; ``None`` means all of them.
+    states: list[str] | None = None
+
+
+class JobPruneOut(BaseModel):
+    deleted: int

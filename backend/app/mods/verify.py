@@ -88,9 +88,27 @@ def _build_args() -> list[str]:
     ]
 
 
-async def _stop_process(process: asyncio.subprocess.Process) -> None:
-    if process.returncode is None:
-        process.terminate()
+async def _stop_process(
+    process: asyncio.subprocess.Process, grace: float = 10.0
+) -> None:
+    """Stop the engine, escalating SIGTERM -> SIGKILL.
+
+    SIGKILL cannot be caught, blocked or ignored, so a wedged engine that sits
+    on SIGTERM still dies here (the only hold-outs are uninterruptible-sleep /
+    zombie states, which no signal can clear).
+    """
+    if process.returncode is not None:
+        return
+    process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=grace)
+        return
+    except asyncio.TimeoutError:
+        pass
+    try:
+        process.kill()
+    except ProcessLookupError:  # pragma: no cover - already gone
+        return
     await process.wait()
 
 
