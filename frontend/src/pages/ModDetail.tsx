@@ -55,6 +55,7 @@ type ModDetail = {
   dependency_tree: DepTree | null;
   versions: ModVersion[];
   used_by: string[];
+  required_by: { guid: string; name: string | null }[];
 };
 
 type EnqueuedJob = { job_id: number; kind: string };
@@ -349,6 +350,36 @@ export function ModDetailPage() {
 
         <Card>
           <CardHeader>
+            <CardTitle>Required By</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {detail.required_by.length ? (
+              <>
+                <p className="mb-2 text-xs text-stone-400">
+                  These library mods declare this one as a dependency. Removing it from the library
+                  or disk is refused while any of them is assigned to a server or in a modpack.
+                </p>
+                <ul className="divide-y divide-stone-800">
+                  {detail.required_by.map((ref) => (
+                    <li key={ref.guid} className="py-2">
+                      <Link
+                        to={`/mods/${ref.guid}`}
+                        className="text-sm font-semibold uppercase tracking-wider text-amber-400 underline-offset-4 hover:underline"
+                      >
+                        {ref.name ?? ref.guid}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="text-xs text-stone-400">No other mod depends on this one.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle>Used By</CardTitle>
           </CardHeader>
           <CardContent>
@@ -394,6 +425,13 @@ export function ModDetailPage() {
             The delete is refused if the mod is still referenced by a server definition, modpack, or
             resolved dependency. Add it again by Workshop URL/ID to restore it.
           </p>
+          {detail.required_by.length ? (
+            <p className="text-[11px] text-amber-300">
+              {detail.required_by.map((ref) => ref.name ?? ref.guid).join(", ")}{" "}
+              {detail.required_by.length === 1 ? "depends" : "depend"} on this mod — the delete will be
+              refused while {detail.required_by.length === 1 ? "it is" : "any is"} assigned or packed.
+            </p>
+          ) : null}
           <div className="flex justify-end gap-2">
             <Button
               type="button"

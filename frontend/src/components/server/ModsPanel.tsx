@@ -177,26 +177,53 @@ export function ModsPanel({
     );
   const removeMod = (guid: string) =>
     setWorking((current) => current.filter((mod) => mod.mod_guid !== guid));
-  const addMod = (mod: Mod) =>
-    setWorking((current) =>
-      current.some((row) => row.mod_guid === mod.guid)
-        ? current
-        : [
-            ...current,
-            {
-              key: mod.guid,
-              guid: mod.guid,
-              name: mod.name,
-              mod_guid: mod.guid,
-              mod_name: mod.name,
-              enabled: true,
-              pinned_version: null,
-              pinned_at_build: null,
-              pinned_reason: null,
-              pinned_at: null,
-            },
-          ],
-    );
+
+  const makeWorkingMod = (guid: string, name: string | null): WorkingMod => ({
+    key: guid,
+    guid,
+    name,
+    mod_guid: guid,
+    mod_name: name,
+    enabled: true,
+    pinned_version: null,
+    pinned_at_build: null,
+    pinned_reason: null,
+    pinned_at: null,
+  });
+
+  // Add a mod and any of its dependencies not already in the set (dependencies
+  // first). The generated config resolves the closure regardless, but listing
+  // the deps explicitly lets them be reordered / pinned per server.
+  const addModWithDeps = async (mod: Mod) => {
+    let nodes: DepNode[] = [];
+    try {
+      const detail = await queryClient.fetchQuery({
+        queryKey: ["mod", mod.guid, "deps"],
+        queryFn: () => api<ModDeps>(`/api/mods/${mod.guid}`),
+        staleTime: 60_000,
+      });
+      nodes = detail.dependency_tree?.nodes ?? [];
+    } catch {
+      // Dependency lookup failed — still add the mod itself.
+    }
+    setWorking((current) => {
+      const present = new Set(current.map((row) => row.mod_guid));
+      const additions: WorkingMod[] = [];
+      for (const node of [...nodes].sort((a, b) => b.depth - a.depth)) {
+        if (
+          node.guid === mod.guid ||
+          node.state === "unresolved" ||
+          present.has(node.guid) ||
+          additions.some((row) => row.mod_guid === node.guid)
+        ) {
+          continue;
+        }
+        additions.push(makeWorkingMod(node.guid, node.name));
+      }
+      if (!present.has(mod.guid)) additions.push(makeWorkingMod(mod.guid, mod.name));
+      return additions.length ? [...current, ...additions] : current;
+    });
+  };
   const discard = () => {
     const next = fromServerMods(server.mods);
     setWorking(next);
@@ -567,7 +594,7 @@ export function ModsPanel({
                 key={mod.guid}
                 mod={mod}
                 existingGuids={workingGuids}
-                onAdd={() => addMod(mod)}
+                onAdd={() => void addModWithDeps(mod)}
               />
             ))}
           </ul>

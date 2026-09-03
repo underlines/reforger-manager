@@ -36,6 +36,7 @@ export type Server = {
   rcon_port: number;
   mods: ServerMod[];
 };
+export type ModRef = { guid: string; name: string | null };
 export type Mod = {
   guid: string;
   name: string | null;
@@ -47,6 +48,7 @@ export type Mod = {
   pinned_version: string | null;
   has_update: boolean;
   stale_pin: boolean;
+  required_by?: ModRef[];
 };
 export type ModpackItem = {
   mod_guid: string;

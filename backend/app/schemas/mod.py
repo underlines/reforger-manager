@@ -23,6 +23,13 @@ class ModDependencyOut(BaseModel):
     source: str | None = None
 
 
+class ModRefOut(BaseModel):
+    """A lightweight reference to another library mod (used by ``required_by``)."""
+
+    guid: str
+    name: str | None = None
+
+
 class ModOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,6 +60,9 @@ class ModOut(BaseModel):
     # computed
     has_update: bool = False
     stale_pin: bool = False
+    # Library mods that declare this mod as a dependency. Non-empty => deleting
+    # this mod / its files is refused while those mods are assigned or packed.
+    required_by: list[ModRefOut] = []
 
     created_at: datetime | None = None
     updated_at: datetime | None = None

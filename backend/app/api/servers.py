@@ -59,7 +59,7 @@ from ..schemas.server import (
     ServerUpdate,
 )
 from ..schemas.job import JobEnqueuedOut
-from ..servers.config_gen import build_config, server_mod_entries, write_config
+from ..servers.config_gen import build_config, resolved_mod_entries, write_config
 from ..servers.preflight import preflight
 from ..servers.supervisor import (
     SingleServerError,
@@ -286,7 +286,7 @@ async def get_generated_config(
     server_id: int, write: bool = Query(default=False), session: AsyncSession = Depends(get_session)
 ) -> ServerConfigOut:
     server = await _load(session, server_id)
-    config = build_config(server, server_mod_entries(server))
+    config = build_config(server, await resolved_mod_entries(session, server))
     path = write_config(server_id, config) if write else None
     from ..core.config import settings
 
@@ -321,7 +321,7 @@ async def preview_generated_config(
 
     return ServerConfigOut(
         server_id=server_id,
-        config=build_config(server, server_mod_entries(server)),
+        config=build_config(server, await resolved_mod_entries(session, server)),
         path=str(settings.config_path(server_id)),
     )
 

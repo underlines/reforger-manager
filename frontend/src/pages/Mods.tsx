@@ -26,6 +26,7 @@ type ModRecord = {
   pinned_reason: string | null;
   has_update: boolean;
   stale_pin: boolean;
+  required_by?: { guid: string; name: string | null }[];
 };
 type EnqueuedJob = { job_id: number; kind: string };
 type SearchResult = {
@@ -445,8 +446,15 @@ function ModRow({
           {mod.has_update && <Badge tone="warn">Update available</Badge>}
           {mod.stale_pin && <Badge tone="bad">Stale pin</Badge>}
           {mod.pinned_version && !mod.stale_pin && <Badge tone="neutral">Pinned {mod.pinned_version}</Badge>}
+          {mod.required_by?.length ? <Badge tone="neutral">Dependency</Badge> : null}
         </div>
         {mod.summary && <p className="text-xs leading-5 text-stone-400">{mod.summary}</p>}
+        {mod.required_by?.length ? (
+          <p className="text-[11px] text-stone-400">
+            Required by {mod.required_by.map((ref) => ref.name ?? ref.guid).join(", ")} — deleting it
+            is blocked while those mods are assigned or packed.
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-stone-400">
           <span className="font-mono text-stone-500">{mod.guid}</span>
           <span>

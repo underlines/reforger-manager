@@ -29,7 +29,7 @@ from ..core.events import broadcaster, server_console_channel
 from ..models import Server, ServerConfigRevision
 from ..rcon.client import RconClient
 from ..steam.engine import scrape_display_version
-from .config_gen import build_config, server_mod_entries, write_config
+from .config_gen import build_config, resolved_mod_entries, write_config
 from .diagnosis import Diagnosis, diagnose
 
 logger = logging.getLogger("reforger.supervisor")
@@ -141,7 +141,7 @@ class Supervisor:
                 if server is None:
                     raise LookupError(f"server {server_id} not found")
 
-                entries = server_mod_entries(server)
+                entries = await resolved_mod_entries(session, server)
                 config = build_config(server, entries)
                 config_path = write_config(server_id, config)
 

@@ -28,7 +28,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..core.config import settings
+from ..models import Mod
 
 DEFAULT_GAME_PROPERTIES: dict = {
     "serverMaxViewDistance": 2500,
@@ -119,7 +123,12 @@ def write_config(server_id: int, config: dict) -> Path:
 
 
 def server_mod_entries(server) -> list[ModEntry]:
-    """Build the ordered mod list from ``server.mods`` (per-server pin wins)."""
+    """Build the ordered mod list from ``server.mods`` alone (per-server pin wins).
+
+    Explicit assignments only — **no dependency expansion**. Kept for callers and
+    tests that want exactly what the user assigned; the server-start and
+    config-preview paths use :func:`resolved_mod_entries` instead.
+    """
     entries: list[ModEntry] = []
     for sm in sorted(server.mods, key=lambda x: x.load_order):
         if not sm.enabled:
@@ -131,4 +140,104 @@ def server_mod_entries(server) -> list[ModEntry]:
                 version=sm.pinned_version or None,
             )
         )
+    return entries
+
+
+async def resolved_mod_entries(session: AsyncSession, server) -> list[ModEntry]:
+    """Full, load-ordered mod list for ``config.json`` — closure included.
+
+    The Reforger dedicated server advertises the mod set from its config to the
+    lobby and to joining clients; when that list is missing a mod's
+    dependencies, client admission fails (``RoomsAcceptPlayerS2S`` /
+    ``InvalidSessionTicket``) even though the engine auto-mounts the deps
+    server-side. So the emitted list is the resolved dependency **closure** of
+    the enabled assignments:
+
+    * dependencies come before the mod that needs them (post-order DFS);
+    * every GUID appears once — a mod assigned explicitly *and* pulled in as a
+      dependency is not duplicated;
+    * engine-owned GUIDs (base game / ``core``) are dropped;
+    * a dependency that cannot be loaded at all (no local dir, unresolvable on
+      the Workshop) is dropped rather than emitted — listing it would make the
+      engine refuse to start ("addons are not downloadable"). Pre-flight
+      surfaces that case separately;
+    * ``name`` and the version pin are taken from the explicit ``ServerMod``
+      row when there is one, otherwise from the library ``Mod`` row.
+    """
+    # late import: config_gen <- supervisor <- mods.downloader <- mods package
+    from ..mods.resolve import ENGINE_BUILTIN_GUIDS, resolve_dependencies
+
+    explicit = [
+        sm for sm in sorted(server.mods, key=lambda x: (x.load_order, x.mod_guid))
+        if sm.enabled
+    ]
+    roots = [sm.mod_guid.upper() for sm in explicit]
+    if not roots:
+        return []
+
+    tree = await resolve_dependencies(session, roots, use_api=False, use_disk=True)
+    node_by_guid = {node.guid: node for node in tree.nodes}
+    child_map: dict[str, list[str]] = {}
+    for parent, child in tree.edges:
+        child_map.setdefault(parent, []).append(child)
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    on_stack: set[str] = set()
+
+    def visit(guid: str) -> None:
+        if guid in seen or guid in on_stack:
+            return
+        on_stack.add(guid)
+        for child in child_map.get(guid, ()):
+            visit(child)
+        on_stack.discard(guid)
+        seen.add(guid)
+        ordered.append(guid)
+
+    for root in roots:
+        visit(root)
+
+    explicit_by_guid = {sm.mod_guid.upper(): sm for sm in explicit}
+    lib = (
+        {
+            mod.guid: mod
+            for mod in (
+                await session.execute(select(Mod).where(Mod.guid.in_(list(seen))))
+            ).scalars()
+        }
+        if seen
+        else {}
+    )
+
+    entries: list[ModEntry] = []
+    for guid in ordered:
+        if guid in ENGINE_BUILTIN_GUIDS:
+            continue
+        sm = explicit_by_guid.get(guid)
+        node = node_by_guid.get(guid)
+        libmod = lib.get(guid)
+
+        if sm is None:
+            loadable = (
+                (libmod is not None and libmod.is_local)
+                or (libmod is not None and libmod.api_state and libmod.api_state.value == "ok")
+                or (node is not None and node.state == "ok")
+            )
+            if not loadable:
+                continue
+
+        name = (
+            (sm.mod_name if sm is not None else None)
+            or (node.name if node is not None else None)
+            or (libmod.name if libmod is not None else None)
+        )
+        version = None
+        if sm is not None and sm.pinned_version:
+            version = sm.pinned_version
+        elif libmod is not None and libmod.pinned_version:
+            version = libmod.pinned_version
+
+        entries.append(ModEntry(mod_id=guid, name=name, version=version))
+
     return entries

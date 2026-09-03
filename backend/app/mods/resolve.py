@@ -26,11 +26,42 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Mod, ModDependency
+from .scanner import parse_gproj, resolve_addon_dir
 from .workshop import ModNotFound, WorkshopClient, WorkshopError, workshop
 
 logger = logging.getLogger("reforger.mods.resolve")
 
 _MAX_DEPTH = 12
+
+# Engine-owned addon GUIDs that appear in ``addon.gproj`` dependency blocks but
+# are not Workshop mods: the base-game data package and the ``core`` package.
+# They are always present, never downloadable, and must never reach a server
+# ``config.json`` ``mods[]`` list.
+ENGINE_BUILTIN_GUIDS = frozenset({
+    "58D0FB3206B6F859",  # data/ArmaReforger.gproj
+    "5614BBCCBB55ED1C",  # core/core.gproj
+})
+
+
+def _disk_gproj_children(guid: str) -> list[tuple[str, str | None]]:
+    """Dependency GUIDs read straight from the on-disk ``addon.gproj``.
+
+    The offline fallback used when neither the Workshop API nor a persisted
+    ``mod_dependencies`` row can supply a mod's dependency list — e.g. a
+    dependency that is present in the addon cache but was never enriched by a
+    ``mod_sync``. Returns ``[]`` when the addon dir or file is absent.
+    """
+    try:
+        addon_dir = resolve_addon_dir(guid)
+        if addon_dir is None:
+            return []
+        return [
+            (dep.upper(), None)
+            for dep in parse_gproj(addon_dir).get("dep_guids", [])
+            if dep.upper() != guid.upper()
+        ]
+    except OSError:
+        return []
 
 
 @dataclass
@@ -86,9 +117,16 @@ async def resolve_dependencies(
     *,
     client: WorkshopClient | None = None,
     use_api: bool = True,
+    use_disk: bool = False,
     max_depth: int = _MAX_DEPTH,
 ) -> ResolvedTree:
-    """BFS the dependency graph from ``root_guids``. See module docstring."""
+    """BFS the dependency graph from ``root_guids``. See module docstring.
+
+    ``use_disk`` adds a final offline fallback: a node with no API record and no
+    persisted ``mod_dependencies`` edge still has its dependency list read from
+    the on-disk ``addon.gproj`` when the addon dir exists. Lets the closure be
+    complete before a ``mod_sync`` has enriched every dependency.
+    """
     client = client or workshop
     roots = [g.upper() for g in root_guids if g]
     tree = ResolvedTree(roots=roots)
@@ -151,18 +189,30 @@ async def resolve_dependencies(
                 if g not in api_child_guids:
                     children.append((g, n))
         else:
-            # 2) local gproj fallback
+            # 2) local gproj fallback — persisted rows first, then, when asked,
+            #    the on-disk addon.gproj (a dependency the sync never enriched).
             gproj_children = await _gproj_children(session, guid)
+            disk_present = False
+            if not gproj_children and use_disk and depth < max_depth:
+                disk_children = _disk_gproj_children(guid)
+                disk_present = resolve_addon_dir(guid) is not None
+                if disk_children:
+                    gproj_children = disk_children
             if gproj_children:
                 children = gproj_children
                 via = "gproj"
-                state = "not_found" if (api_not_found or not is_local) else "ok"
+                if disk_present:
+                    state = "ok"
+                else:
+                    state = "not_found" if (api_not_found or not is_local) else "ok"
             elif api_ok:
                 # resolved, genuinely no dependencies
                 children, via, state = [], "api", "ok"
-            elif is_local:
+            elif is_local or disk_present:
                 # on disk, empty/absent addon.gproj, API unusable
-                children, via, state = [], "gproj", ("not_found" if api_not_found else "ok")
+                children, via, state = [], "gproj", (
+                    "not_found" if (api_not_found and not disk_present) else "ok"
+                )
             else:
                 # neither a local dir nor an API record
                 children, via, state = [], "unknown", "unresolved"

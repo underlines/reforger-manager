@@ -168,9 +168,45 @@ async def enrich_one(
 
     await _upsert_api_scenarios(session, guid, api_scenarios)
     await _upsert_api_dependencies(session, guid, api_deps)
+    await _ensure_dependency_stub_rows(session, guid)
 
     await session.flush()
     return row
+
+
+async def _ensure_dependency_stub_rows(session: AsyncSession, mod_guid: str) -> None:
+    """Make sure every dependency of ``mod_guid`` has its own ``mods`` row.
+
+    Without this, a dependency-only addon (RHS content packs, a shared core lib)
+    is invisible in the library and the server / modpack mod pickers until a full
+    ``mod_sync`` scans its directory. Stub rows carry the name from the API
+    dependency record and ``is_local`` from the on-disk addon dir; a later
+    enrich / scan fills the rest. Existing rows are only ever upgraded, never
+    downgraded.
+    """
+    from .resolve import ENGINE_BUILTIN_GUIDS
+    from .scanner import resolve_addon_dir
+
+    edges = (
+        await session.execute(
+            select(ModDependency.depends_on_guid, ModDependency.depends_on_name).where(
+                ModDependency.mod_guid == mod_guid
+            )
+        )
+    ).all()
+    for dep_guid, dep_name in edges:
+        dep_guid = dep_guid.upper()
+        if dep_guid == mod_guid.upper() or dep_guid in ENGINE_BUILTIN_GUIDS:
+            continue
+        on_disk = resolve_addon_dir(dep_guid) is not None
+        drow = await session.get(Mod, dep_guid)
+        if drow is None:
+            session.add(Mod(guid=dep_guid, name=dep_name, is_local=on_disk))
+        else:
+            if dep_name and not drow.name:
+                drow.name = dep_name
+            if on_disk and not drow.is_local:
+                drow.is_local = True
 
 
 async def _upsert_api_scenarios(

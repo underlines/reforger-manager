@@ -15,6 +15,9 @@ import { api, ApiError, apiVoid, type Mod, type Modpack, type Server } from "../
  * ------------------------------------------------------------------ */
 type EditorItem = { key: string; guid: string; name: string | null; mod_guid: string };
 
+type DepNode = { guid: string; name: string | null; via: string; state: string; depth: number };
+type ModDeps = { dependency_tree: { nodes: DepNode[] } | null };
+
 type ExportShape = {
   name: string;
   description: string | null;
@@ -125,12 +128,44 @@ export function ModpacksPage() {
     setEditingId(null);
   };
 
-  const addItem = (mod: Mod) =>
-    setItems((current) =>
-      current.some((item) => item.mod_guid === mod.guid)
-        ? current
-        : [...current, { key: mod.guid, guid: mod.guid, name: mod.name, mod_guid: mod.guid }],
-    );
+  const makeItem = (guid: string, name: string | null): EditorItem => ({
+    key: guid,
+    guid,
+    name,
+    mod_guid: guid,
+  });
+
+  // Add a mod plus any dependencies not already in the pack (dependencies first).
+  const addItem = async (mod: Mod) => {
+    let nodes: DepNode[] = [];
+    try {
+      const detail = await queryClient.fetchQuery({
+        queryKey: ["mod", mod.guid, "deps"],
+        queryFn: () => api<ModDeps>(`/api/mods/${mod.guid}`),
+        staleTime: 60_000,
+      });
+      nodes = detail.dependency_tree?.nodes ?? [];
+    } catch {
+      // Dependency lookup failed — still add the mod itself.
+    }
+    setItems((current) => {
+      const present = new Set(current.map((item) => item.mod_guid));
+      const additions: EditorItem[] = [];
+      for (const node of [...nodes].sort((a, b) => b.depth - a.depth)) {
+        if (
+          node.guid === mod.guid ||
+          node.state === "unresolved" ||
+          present.has(node.guid) ||
+          additions.some((item) => item.mod_guid === node.guid)
+        ) {
+          continue;
+        }
+        additions.push(makeItem(node.guid, node.name));
+      }
+      if (!present.has(mod.guid)) additions.push(makeItem(mod.guid, mod.name));
+      return additions.length ? [...current, ...additions] : current;
+    });
+  };
   const removeItem = (guid: string) =>
     setItems((current) => current.filter((item) => item.mod_guid !== guid));
 
@@ -388,7 +423,7 @@ export function ModpacksPage() {
                             {!mod.is_local && <span className="text-amber-400">not local</span>}
                           </span>
                         </span>
-                        <Button size="sm" type="button" onClick={() => addItem(mod)}>
+                        <Button size="sm" type="button" onClick={() => void addItem(mod)}>
                           Add
                         </Button>
                       </li>

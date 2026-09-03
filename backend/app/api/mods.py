@@ -22,7 +22,16 @@ from ..core.config import settings
 from ..core.db import get_session
 from ..core.jobs import job_manager
 from ..core.security import get_current_user
-from ..models import ENGINE_SINGLETON_ID, Engine, Mod, Server, ServerMod
+from ..models import (
+    ENGINE_SINGLETON_ID,
+    Engine,
+    Mod,
+    ModDependency,
+    Modpack,
+    ModpackItem,
+    Server,
+    ServerMod,
+)
 from ..mods.downloader import MOD_DOWNLOAD_JOB_KIND
 from ..mods.freespace import check_free_space, estimate_download_bytes, guard_update_scope
 from ..mods.pinning import CurrentEngineBuildMissing, PinRecordNotFound, pin_mod, unpin_mod
@@ -42,6 +51,7 @@ from ..schemas.mod import (
     ModDownloadIn,
     ModOut,
     ModPinIn,
+    ModRefOut,
     ModSearchResult,
     ResolvedTreeOut,
     ModVerifyIn,
@@ -75,11 +85,77 @@ def _stale_pin(mod: Mod, engine_build: str | None) -> bool:
     return bool(mod.pinned_at_build and engine_build and mod.pinned_at_build != engine_build)
 
 
-def _to_out(mod: Mod, engine_build: str | None) -> ModOut:
+def _to_out(
+    mod: Mod,
+    engine_build: str | None,
+    required_by: list[ModRefOut] | None = None,
+) -> ModOut:
     out = ModOut.model_validate(mod)
     out.has_update = _has_update(mod)
     out.stale_pin = _stale_pin(mod, engine_build)
+    out.required_by = required_by or []
     return out
+
+
+async def _reverse_dependents(session: AsyncSession) -> dict[str, list[ModRefOut]]:
+    """``depends_on_guid`` -> the library mods that declare it as a dependency."""
+    rows = (
+        await session.execute(
+            select(ModDependency.depends_on_guid, Mod.guid, Mod.name)
+            .join(Mod, Mod.guid == ModDependency.mod_guid)
+            .order_by(Mod.name.is_(None), Mod.name, Mod.guid)
+        )
+    ).all()
+    out: dict[str, list[ModRefOut]] = {}
+    for dep_guid, owner_guid, owner_name in rows:
+        bucket = out.setdefault(dep_guid.upper(), [])
+        if not any(ref.guid == owner_guid for ref in bucket):
+            bucket.append(ModRefOut(guid=owner_guid, name=owner_name))
+    return out
+
+
+async def _delete_block_detail(
+    session: AsyncSession, guid: str, closure_owners: dict[str, set[str]]
+) -> str:
+    """A specific 'why this delete is refused' message: the servers, modpacks,
+    and parent mods that keep ``guid`` alive."""
+    servers = (
+        await session.execute(
+            select(Server.name)
+            .join(ServerMod, ServerMod.server_id == Server.id)
+            .where(ServerMod.mod_guid == guid)
+            .order_by(Server.name)
+        )
+    ).scalars().all()
+    packs = (
+        await session.execute(
+            select(Modpack.name)
+            .join(ModpackItem, ModpackItem.modpack_id == Modpack.id)
+            .where(ModpackItem.mod_guid == guid)
+            .order_by(Modpack.name)
+        )
+    ).scalars().all()
+    parents = sorted(owner for owner in closure_owners.get(guid, set()) if owner != guid)
+    parent_labels: list[str] = []
+    if parents:
+        names = dict(
+            (
+                await session.execute(
+                    select(Mod.guid, Mod.name).where(Mod.guid.in_(parents))
+                )
+            ).all()
+        )
+        parent_labels = [names.get(p) or p for p in parents]
+
+    parts: list[str] = []
+    if servers:
+        parts.append("server definition(s) " + ", ".join(servers))
+    if packs:
+        parts.append("modpack(s) " + ", ".join(packs))
+    if parent_labels:
+        parts.append("a dependency of " + ", ".join(parent_labels))
+    where = "; ".join(parts) if parts else "a server definition, modpack, or resolved dependency"
+    return f"mod {guid} cannot be deleted — still referenced by {where}."
 
 
 # --------------------------------------------------------------------- list
@@ -107,7 +183,8 @@ async def list_mods(
 
     rows = (await session.execute(stmt)).scalars().all()
     engine_build = await _engine_build(session)
-    return [_to_out(m, engine_build) for m in rows]
+    dependents = await _reverse_dependents(session)
+    return [_to_out(m, engine_build, dependents.get(m.guid, [])) for m in rows]
 
 
 # ------------------------------------------------------------------ search
@@ -233,8 +310,7 @@ async def delete_local_mod(
     if guid in directly_referenced or guid in closure_owners:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"mod {guid} is still referenced by a server definition, modpack, "
-            "or resolved dependency; refusing to delete",
+            await _delete_block_detail(session, guid, closure_owners),
         )
 
     root = addons_root().resolve()
@@ -278,8 +354,7 @@ async def delete_library_mod(
     if guid in directly_referenced or guid in closure_owners:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f"mod {guid} is still referenced by a server definition, modpack, "
-            "or resolved dependency; refusing to delete",
+            await _delete_block_detail(session, guid, closure_owners),
         )
 
     if mod.is_local:
@@ -308,7 +383,18 @@ async def get_mod_detail(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "mod not found")
 
     engine_build = await _engine_build(session)
-    base = _to_out(mod, engine_build)
+    required_by = [
+        ModRefOut(guid=owner_guid, name=owner_name)
+        for owner_guid, owner_name in (
+            await session.execute(
+                select(Mod.guid, Mod.name)
+                .join(ModDependency, ModDependency.mod_guid == Mod.guid)
+                .where(ModDependency.depends_on_guid == guid)
+                .order_by(Mod.name.is_(None), Mod.name, Mod.guid)
+            )
+        ).all()
+    ]
+    base = _to_out(mod, engine_build, required_by)
 
     versions: list[dict] = []
     try:
