@@ -63,8 +63,14 @@ MUTATION_TOOLS = {
     "scan_mods",
     "add_mod",
     "delete_mod",
+    "delete_mod_local",
+    "download_mod",
+    "verify_mods",
+    "check_all_mod_updates",
+    "apply_all_mod_updates",
     # modpacks
     "create_modpack",
+    "create_modpack_from_server",
     "update_modpack",
     "delete_modpack",
     "apply_modpack",
@@ -90,6 +96,10 @@ JOB_RETURNING_TOOLS = {
     "check_server_mod_updates",
     "scan_mods",
     "update_engine",
+    "download_mod",
+    "verify_mods",
+    "check_all_mod_updates",
+    "apply_all_mod_updates",
 }
 
 
@@ -304,6 +314,29 @@ class ConfirmGateTests(_Fixture, unittest.IsolatedAsyncioTestCase):
             rows = _result_json(await session.call_tool("list_servers", {}))
         self.assertEqual([s["name"] for s in rows], ["main", "copy"])
 
+    async def test_create_modpack_from_server_gates_on_confirm_and_creates_via_the_api(self) -> None:
+        from app.models import ServerMod
+
+        row = await self._seed_server("main")
+        async with self.sessions() as s:
+            s.add(ServerMod(server_id=row.id, mod_guid="C" * 16, mod_name="CBA"))
+            await s.commit()
+        async with self.mcp_session() as session:
+            refused = await session.call_tool(
+                "create_modpack_from_server", {"server_id": row.id, "name": "snap"}
+            )
+            self.assertTrue(refused.is_error)
+            self.assertIn("confirm", _first_text(refused))
+            done = await session.call_tool(
+                "create_modpack_from_server",
+                {"server_id": row.id, "name": "snap", "confirm": True},
+            )
+            self.assertFalse(done.is_error, _first_text(done))
+            self.assertEqual(_result_json(done)["name"], "snap")
+            self.assertIsNone(_result_json(done)["pins_note"])
+            packs = _result_json(await session.call_tool("list_modpacks", {}))
+        self.assertEqual([p["name"] for p in packs], ["snap"])
+
     async def test_schedule_server_restart_gates_on_confirm(self) -> None:
         row = await self._seed_server("main", rcon_password="secret")
         schedule = MagicMock(
@@ -428,6 +461,22 @@ class ConfirmGateTests(_Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(mods[0]["pinned_version"])
         self.assertIsNone(mods[0]["pinned_reason"])
 
+    async def test_delete_mod_local_gates_on_confirm_and_reaches_the_api(self) -> None:
+        from app.models import Mod
+
+        async with self.sessions() as s:
+            s.add(Mod(guid="B" * 16, is_local=False))
+            await s.commit()
+        async with self.mcp_session() as session:
+            refused = await session.call_tool("delete_mod_local", {"guid": "B" * 16})
+            self.assertTrue(refused.is_error)
+            self.assertIn("confirm", _first_text(refused))
+            reached = await session.call_tool(
+                "delete_mod_local", {"guid": "B" * 16, "confirm": True}
+            )
+        self.assertTrue(reached.is_error)
+        self.assertIn("409", _first_text(reached))
+
 
 class JobReturningToolTests(_Fixture, unittest.IsolatedAsyncioTestCase):
     """Job tools answer with the API's JobEnqueuedOut ({job_id, kind})."""
@@ -456,6 +505,37 @@ class JobReturningToolTests(_Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.is_error, _first_text(result))
         self.assertEqual(_result_json(result), {"job_id": 7, "kind": "mod_sync"})
         self.enqueue.assert_awaited_once()
+
+    async def test_download_mod_returns_job_enqueued_out(self) -> None:
+        from app.models import Mod
+
+        async with self.sessions() as s:
+            s.add(Mod(guid="A" * 16, size=1))
+            await s.commit()
+        async with self.mcp_session() as session:
+            result = await session.call_tool(
+                "download_mod", {"guid": "A" * 16, "confirm": True}
+            )
+        self.assertFalse(result.is_error, _first_text(result))
+        self.assertEqual(_result_json(result), {"job_id": 7, "kind": "mod_download"})
+
+    async def test_verify_mods_returns_job_enqueued_out(self) -> None:
+        async with self.mcp_session() as session:
+            result = await session.call_tool("verify_mods", {"confirm": True})
+        self.assertFalse(result.is_error, _first_text(result))
+        self.assertEqual(_result_json(result), {"job_id": 7, "kind": "verify_repair"})
+
+    async def test_check_all_mod_updates_returns_job_enqueued_out(self) -> None:
+        async with self.mcp_session() as session:
+            result = await session.call_tool("check_all_mod_updates", {"confirm": True})
+        self.assertFalse(result.is_error, _first_text(result))
+        self.assertEqual(_result_json(result), {"job_id": 7, "kind": "mod_update_check"})
+
+    async def test_apply_all_mod_updates_returns_job_enqueued_out(self) -> None:
+        async with self.mcp_session() as session:
+            result = await session.call_tool("apply_all_mod_updates", {"confirm": True})
+        self.assertFalse(result.is_error, _first_text(result))
+        self.assertEqual(_result_json(result), {"job_id": 7, "kind": "mod_update_apply"})
 
     async def test_apply_server_mod_updates_returns_job_enqueued_out(self) -> None:
         row = await self._seed_server("main")

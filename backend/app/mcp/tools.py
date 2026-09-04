@@ -37,8 +37,13 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from ..schemas.backup import BackupDocument
 from ..schemas.job import JobPruneIn
-from ..schemas.mod import ModAddIn
-from ..schemas.modpack import ModpackApplyIn, ModpackCreate, ModpackUpdate
+from ..schemas.mod import ModAddIn, ModDownloadIn, ModVerifyIn
+from ..schemas.modpack import (
+    ModpackApplyIn,
+    ModpackCreate,
+    ModpackFromServerIn,
+    ModpackUpdate,
+)
 from ..schemas.server import (
     RconCommandIn,
     ScheduleRestartIn,
@@ -703,6 +708,76 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         ),
         confirm=True,
     ),
+    ToolSpec(
+        name="download_mod",
+        method="POST",
+        path="/api/mods/{guid}/download",
+        description=(
+            "Force a (re)download of one library mod's addon files by 16-hex GUID, "
+            "optionally pinned to an exact Workshop version. Side effect: writes to "
+            "the mod disk cache (steamcmd). 404 if the GUID is not a library row, "
+            "400/409 if the free-space guard trips. Returns the enqueued job "
+            "({job_id, kind}) immediately — poll it with wait_for_job(job_id)."
+        ),
+        arg_model=ModDownloadIn,
+        confirm=True,
+    ),
+    ToolSpec(
+        name="verify_mods",
+        method="POST",
+        path="/api/mods/verify",
+        description=(
+            "Enqueue the verify_repair job: re-check downloaded addon files against "
+            "their Workshop manifests and re-fetch anything missing or corrupt. "
+            "guids omitted = the whole local library; pass a guids list to scope "
+            "it. Side effect: may rewrite the mod disk cache. Returns the enqueued "
+            "job ({job_id, kind}) immediately — poll it with wait_for_job(job_id)."
+        ),
+        arg_model=ModVerifyIn,
+        confirm=True,
+    ),
+    ToolSpec(
+        name="check_all_mod_updates",
+        method="POST",
+        path="/api/mods/updates/check",
+        description=(
+            "Enqueue a library-WIDE mod-update-check job: refresh latest Workshop "
+            "versions and pin staleness for every mod in the library — downloads "
+            "nothing. Use check_server_mod_updates instead to scope it to one "
+            "server's assigned set. Returns the enqueued job ({job_id, kind}) "
+            "immediately — poll it with wait_for_job(job_id), then list_mods "
+            "(update=true) to see what is newer."
+        ),
+        confirm=True,
+    ),
+    ToolSpec(
+        name="apply_all_mod_updates",
+        method="POST",
+        path="/api/mods/updates/apply",
+        description=(
+            "Enqueue a library-WIDE mod-update-apply job: download the newer "
+            "Workshop version of every library mod that has one and reconcile pins "
+            "against the current engine build. Side effect: writes to the mod disk "
+            "cache. 409 while any server is running or the free-space guard trips. "
+            "Returns the enqueued job ({job_id, kind}) immediately — poll it with "
+            "wait_for_job(job_id)."
+        ),
+        confirm=True,
+    ),
+    ToolSpec(
+        name="delete_mod_local",
+        method="DELETE",
+        path="/api/mods/{guid}/local",
+        description=(
+            "Delete one mod's on-disk addon files but KEEP its catalogue row "
+            "(is_local flips to false) — the disk-space counterpart of delete_mod, "
+            "which removes the row too. Side effect: removes the addon directory. "
+            "409 while any server runs, if the mod has no on-disk files, or while "
+            "it is still referenced by a server/modpack or another mod's resolved "
+            "dependency closure; 404 for an unknown GUID. Returns the updated mod."
+        ),
+        confirm=True,
+    ),
     # Modpacks
     ToolSpec(
         name="create_modpack",
@@ -755,6 +830,21 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "server runs; 404 for an unknown pack or server."
         ),
         arg_model=ModpackApplyIn,
+        confirm=True,
+    ),
+    ToolSpec(
+        name="create_modpack_from_server",
+        method="POST",
+        path="/api/modpacks/from-server/{server_id}",
+        description=(
+            "Snapshot a server definition's current mod set and load order into a "
+            "NEW modpack (name required, optional description). Side effect: a new "
+            "modpack row. Pins are NOT carried into the pack (a pack is a mod list, "
+            "not a version lock) — pins_note in the response names any that were "
+            "dropped. The source server is never modified. 404 for an unknown "
+            "server; 409 on a modpack name collision."
+        ),
+        arg_model=ModpackFromServerIn,
         confirm=True,
     ),
     # Engine
