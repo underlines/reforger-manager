@@ -31,7 +31,8 @@ export function DashboardPage() {
     },
   });
   const actionError = check.error ?? update.error;
-  const engineReady = Boolean(engine.data?.update_available);
+  const notInstalled = engine.data != null && engine.data.installed_build == null;
+  const engineReady = Boolean(engine.data?.update_available) || notInstalled;
 
   return (
     <>
@@ -56,9 +57,15 @@ export function DashboardPage() {
                 update.mutate();
               }}
               disabled={!engineReady || check.isPending || update.isPending}
-              title={engineReady ? "Queue engine update" : "No engine update is available"}
+              title={
+                notInstalled
+                  ? "Download and install the engine via steamcmd"
+                  : engineReady
+                    ? "Queue engine update"
+                    : "No engine update is available"
+              }
             >
-              {update.isPending ? "Queueing update..." : "Update engine"}
+              {update.isPending ? "Queueing..." : notInstalled ? "Install engine" : "Update engine"}
             </Button>
           </>
         }
@@ -68,15 +75,23 @@ export function DashboardPage() {
           label="Installed build"
           value={engine.data?.installed_build ?? "Unreported"}
           status={
-            engine.isLoading ? "CHECKING" : engine.data?.update_available ? "UPDATE AVAILABLE" : engine.data ? "CURRENT" : "UNKNOWN"
+            engine.isLoading
+              ? "CHECKING"
+              : notInstalled
+                ? "NOT INSTALLED"
+                : engine.data?.update_available
+                  ? "UPDATE AVAILABLE"
+                  : engine.data
+                    ? "CURRENT"
+                    : "UNKNOWN"
           }
-          tone={engine.data?.update_available ? "warn" : engine.data ? "good" : "neutral"}
+          tone={notInstalled ? "bad" : engine.data?.update_available ? "warn" : engine.data ? "good" : "neutral"}
         />
         <Metric
           label="Available build"
           value={engine.data?.latest_build ?? "Unreported"}
-          status={engine.data?.update_available ? "READY TO APPLY" : "NO UPDATE"}
-          tone={engine.data?.update_available ? "warn" : "neutral"}
+          status={engine.data?.update_available ? "READY TO APPLY" : notInstalled ? "READY TO INSTALL" : "NO UPDATE"}
+          tone={engine.data?.update_available || notInstalled ? "warn" : "neutral"}
         />
         <Metric
           label="Installed display version"
@@ -110,8 +125,8 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent className="grid gap-3 text-sm">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={engine.data?.update_available ? "warn" : "neutral"}>
-                {engine.data?.update_available ? "Update available" : "No update available"}
+              <Badge tone={engine.data?.update_available ? "warn" : notInstalled ? "bad" : "neutral"}>
+                {engine.data?.update_available ? "Update available" : notInstalled ? "Engine not installed" : "No update available"}
               </Badge>
               {engine.data?.last_checked && (
                 <span className="text-xs text-stone-500 dark:text-stone-400">
@@ -120,9 +135,11 @@ export function DashboardPage() {
               )}
             </div>
             <p className="m-0 text-xs leading-6 text-stone-600 dark:text-stone-300">
-              {engine.data?.update_available
-                ? "An engine update can be queued. The backend will refuse it if a server is running."
-                : "Update is disabled until the engine check reports a newer available build."}
+              {notInstalled
+                ? "No engine is installed. Queue an install to download the server files; the backend will refuse it if a server is running."
+                : engine.data?.update_available
+                  ? "An engine update can be queued. The backend will refuse it if a server is running."
+                  : "Update is disabled until the engine check reports a newer available build."}
             </p>
             {actionError && (
               <p className="error m-0" role="alert">
@@ -131,7 +148,7 @@ export function DashboardPage() {
             )}
             {update.isSuccess && (
               <p className="m-0 text-xs text-emerald-700 dark:text-emerald-300" role="status">
-                Engine update queued. Follow progress in Jobs.
+                Engine {notInstalled ? "install" : "update"} queued. Follow progress in Jobs.
               </p>
             )}
           </CardContent>
@@ -203,7 +220,7 @@ function Metric({
   label: string;
   value: string;
   status: string;
-  tone: "neutral" | "good" | "warn";
+  tone: "neutral" | "good" | "warn" | "bad";
 }) {
   return (
     <Card>

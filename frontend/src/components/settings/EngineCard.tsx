@@ -24,6 +24,8 @@ export function EngineCard() {
   const engineBusy = check.isPending || update.isPending;
   const actionError = check.error ?? update.error;
   const updateAvailable = engine.data?.update_available === true;
+  const notInstalled = engine.data != null && engine.data.installed_build == null;
+  const canQueue = updateAvailable || notInstalled;
 
   return (
     <Card>
@@ -63,15 +65,17 @@ export function EngineCard() {
               <dd>{formatDate(engine.data.last_updated_at)}</dd>
               <dt>Readiness</dt>
               <dd>
-                <Badge tone={updateAvailable ? "warn" : "good"}>
-                  {updateAvailable ? "Update available" : "Current"}
+                <Badge tone={notInstalled ? "bad" : updateAvailable ? "warn" : "good"}>
+                  {notInstalled ? "Not installed" : updateAvailable ? "Update available" : "Current"}
                 </Badge>
               </dd>
             </dl>
             <p>
-              {updateAvailable
-                ? "Queueing an update validates the server files. The backend will refuse this operation while a server is running."
-                : "Run a check to compare the installed engine with the latest available build."}
+              {notInstalled
+                ? "No engine is installed. Queue an install to download the server files via steamcmd; the backend will refuse it while a server is running."
+                : updateAvailable
+                  ? "Queueing an update validates the server files. The backend will refuse this operation while a server is running."
+                  : "Run a check to compare the installed engine with the latest available build."}
             </p>
           </>
         )}
@@ -82,7 +86,7 @@ export function EngineCard() {
         )}
         {update.isSuccess && (
           <p className="text-xs text-emerald-700 dark:text-emerald-300" role="status">
-            Engine update queued as job #{update.data.job_id}. Track its progress in Jobs.
+            Engine {notInstalled ? "install" : "update"} queued as job #{update.data.job_id}. Track its progress in Jobs.
           </p>
         )}
         <div className="flex flex-wrap gap-2">
@@ -101,12 +105,16 @@ export function EngineCard() {
               check.reset();
               update.mutate();
             }}
-            disabled={engineBusy || !updateAvailable}
+            disabled={engineBusy || !canQueue}
             title={
-              updateAvailable ? "Queue an engine update" : "An engine check must report an available update first"
+              notInstalled
+                ? "Download and install the engine via steamcmd"
+                : canQueue
+                  ? "Queue an engine update"
+                  : "An engine check must report an available update first"
             }
           >
-            {update.isPending ? "Queueing..." : "Queue update"}
+            {update.isPending ? "Queueing..." : notInstalled ? "Install engine" : "Queue update"}
           </Button>
         </div>
       </CardContent>
