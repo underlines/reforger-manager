@@ -1,17 +1,62 @@
 # reforger-manager
 
-Purpose-built **Arma Reforger** dedicated-server manager. Unlike general-purpose
-multi-game managers (e.g. `arma-server-manager`, an Arma 3 / DayZ tool with
-Reforger bolted on), this is a Reforger-only stack: a server-template system
-(many saved definitions; **one runs at a time**), a real mod subsystem (library,
-Workshop lookup, dependency resolution, version pinning, pre-flight validation),
-engine build tracking, RCON/A2S, and a reactive web UI.
+reforger-manager is a self-hosted manager for **Arma Reforger** dedicated
+servers: a single Docker stack (FastAPI + process supervisor, React web UI,
+Postgres) that installs the engine, stores many server definitions, and runs one
+of them as a supervised game-server process with live console, RCON and A2S. It
+ships a complete mod subsystem — a local library synced with the Steam Workshop,
+transitive dependency resolution, per-server version pinning, and pre-flight
+validation — plus engine build-id tracking and a scheduled-restart system.
 
-Design context: [.sprints/1/PLAN.md](.sprints/1/PLAN.md) (build) and
-[.sprints/2/PLAN.md](.sprints/2/PLAN.md) (close the UI ↔ API gap, finish the
-deferred features). **Both sprints are done**; Sprint 2 outcome is in
-[.sprints/2/RESULTS.md](.sprints/2/RESULTS.md). Per-story detail:
-`.sprints/<n>/STORIES.md`. Local dev / contributor guide: [CLAUDE.md](CLAUDE.md).
+It exists because the general-purpose multi-game panels (Pterodactyl, LinuxGSM,
+`arma-server-manager` and similar) treat Reforger as an afterthought bolted onto
+an Arma 3 / DayZ workflow. They cover "spawn a process with these flags" and
+leave the genuinely awkward parts as manual work: the anonymous-only Steam
+install, the Workshop mod dependency graph, build-id-based update detection, mod
+pins that silently go stale after an engine update, and the constraint that only
+one server can bind the host's UDP ports at a time. Here each of those is a
+first-class feature with both a UI and an API, and the tool enforces Reforger's
+real limits instead of pretending they aren't there.
+
+## Features
+
+- **Server definitions** — save many server configs (network, RCON, game
+  settings, ordered mod set); create / edit / clone / delete, favourites, and a
+  hybrid structured + raw-JSON config editor with debounced live preview. Only
+  one definition runs at a time.
+- **Supervised game server** — start / stop a Reforger process as a managed
+  child; live console log with DB-driven spam filtering, player list over RCON,
+  session stats over A2S.
+- **Mod library + Workshop** — add by URL or 16-hex GUID, inline Workshop
+  search, cached metadata, version history with `gameVersion`, resolved
+  dependency trees, `used_by` back-references.
+- **Dependency resolution & pinning** — transitive dependency closure per
+  server; inline per-server version pins that survive mod-set edits and are
+  re-validated against the installed engine build.
+- **Pre-flight validation** — every definition graded `ok` / `warn` / `blocked`
+  before start, distinguishing unresolvable mods, stale pins, engine-version
+  mismatches and phantom `.gproj` dependencies.
+- **Engine build tracking** — build-id-based update detection via the public
+  Steam API / steamcmd; updates blocked while a server runs; a post-update sweep
+  re-runs pre-flight and re-checks every pin across all definitions.
+- **Modpacks** — reusable named mod lists with drag order; apply-to-server
+  (replace / append), create-from-server, JSON export / import.
+- **Storage management** — per-mod on-disk sizes, free / total, orphan and
+  unreferenced-row detection, delete local files while keeping the library entry.
+- **Players & scheduled restart** — players tab with kick / ban; one cancellable
+  in-memory restart schedule per server with `#say` warnings and a
+  reload-surviving countdown.
+- **Profile file browser** — per-server "Files" tab: list / view / whole-file
+  edit (JSON-validated) / upload / mkdir / rename / recursive delete / download
+  (incl. zip); read-only while that server runs.
+- **Backup** — export every definition, mod set, pin and modpack as one JSON
+  document; dry-run import with a per-name conflict plan.
+- **Runtime settings** — nightly engine-check toggle / hour, console spam
+  patterns, admin password change — all applied live.
+- **Agent interface (MCP)** — the whole admin surface as MCP tools over HTTP,
+  mirroring the REST API 1:1, with a `confirm` gate on every state-changing tool.
+- **Anonymous Steam** — engine install / update via `steamcmd +login anonymous`;
+  no Steam account, Steam Guard or 2FA anywhere.
 
 ## Ports
 
@@ -105,72 +150,19 @@ bad edit is only recoverable from NAS-side ZFS snapshots of the bind mount.
 
 ## Connect an agent
 
-The manager exposes its administration surface as MCP tools over Streamable
-HTTP at `/mcp`. The tool layer is a thin, authenticated adapter: every tool
-calls this instance's own REST API in-process (same DI, job manager, 409s and
-single-server rule as the webui), so the webui and an agent can never diverge.
-The surface is the REST verbs mirrored 1:1 plus three read-only composites —
-`server_overview` (one-shot situation report), `tail_log` (console tail) and
-`wait_for_job` (poll a background job to its terminal state). Every
-state-changing tool takes a `confirm` flag that defaults to `false` and refuses
-to run without it; job-returning tools answer with a job id for `wait_for_job`.
+The manager exposes its full admin surface as MCP tools over **streamable HTTP**
+at `https://<host>/mcp`; point any MCP client there with an
+`Authorization: Bearer <token>` header. The tools mirror the REST API 1:1, plus
+three read-only composites (`server_overview`, `tail_log`, `wait_for_job`), and
+every state-changing tool requires an explicit `confirm` flag.
 
-1. **Create a token** — webui → Settings → "MCP Tokens" → create. Give it a
-   label (e.g. the machine or agent); the raw `rfm_...` value is shown exactly
-   once and only its sha256 hash is stored. Revoke from the same card. Tokens
-   are full admin — treat them like the webui password.
-2. **Claude Code** (CLI):
+Create a token in the web UI under **Settings → MCP Tokens**. The raw `rfm_…`
+value is shown once and only its hash is stored; a token is full admin, so treat
+it like the web UI password and revoke it from the same place.
 
-   ```bash
-   claude mcp add --transport http reforger-manager https://<host>/mcp \
-     --header "Authorization: Bearer rfm_<redacted>"
-   ```
-
-   or in `.mcp.json` / the agent's `mcpServers` config:
-
-   ```json
-   {
-     "mcpServers": {
-       "reforger-manager": {
-         "type": "http",
-         "url": "https://<host>/mcp",
-         "headers": {
-           "Authorization": "Bearer rfm_<redacted>"
-         }
-       }
-     }
-   }
-   ```
-
-3. **opencode** (`opencode.json`):
-
-   ```json
-   {
-     "$schema": "https://opencode.ai/config.json",
-     "mcp": {
-       "reforger-manager": {
-         "type": "remote",
-         "url": "https://<host>/mcp",
-         "enabled": true,
-         "headers": {
-           "Authorization": "Bearer rfm_<redacted>"
-         }
-       }
-     }
-   }
-   ```
-
-4. **Codex** (`~/.codex/config.toml`):
-
-   ```toml
-   [mcp_servers.reforger-manager]
-   url = "https://<host>/mcp"
-   http_headers = { "Authorization" = "Bearer rfm_<redacted>" }
-   ```
-
-**Reverse proxy note.** `/mcp` responses are streamed (SSE); a proxy in front
-of the manager must not buffer them (nginx: `proxy_buffering off` for this
-location, or an `X-Accel-Buffering: no` response header).
+**Reverse-proxy note.** `/mcp` responses are streamed (SSE) — a proxy in front
+of the manager must not buffer them (nginx: `proxy_buffering off` for the
+location, or send `X-Accel-Buffering: no`).
 
 ## Deploying
 
@@ -205,19 +197,13 @@ docker compose -f docker-compose.yml up -d      # production shape (host network
 TLS termination and routing are out of scope for this compose — put a reverse
 proxy in front and point it at `http://<host>:18090`.
 
-### Portainer git-stack + CI
+### CI / auto-deploy
 
-`.github/workflows/ci.yml` runs `pytest` + `npm run build` on every push/PR, then
-on a push to `main` POSTs to a Portainer stack webhook so the NAS re-pulls and
-redeploys. Setup:
-
-1. Portainer → *Stacks* → add stack, build method **Repository**, this repo,
-   compose path `docker-compose.yml`. Set the variables above under *Environment
-   variables*. Enable *GitOps updates → Webhook*.
-2. `gh secret set PORTAINER_WEBHOOK_URL` with the webhook URL from step 1 — the
-   only secret GitHub holds; a leak only lets someone trigger a redeploy.
-
-The build happens on the NAS (`build: .`), so a deploy takes a few minutes.
+`.github/workflows/ci.yml` runs `pytest` + `npm run build` on every push and PR.
+Continuous deployment is left to your infrastructure — for example a Portainer
+git-stack that rebuilds the image on a webhook POSTed from a GitHub Actions job
+on `main`. The build then happens on the deploy host (`build: .`), so it takes a
+few minutes.
 
 ### Image internals
 
@@ -256,73 +242,10 @@ Two intentional refinements over a naive check:
 An unresolvable mod (Workshop 404 with no local dir) blocks; a phantom `.gproj` dependency (parent
 resolves, dependency GUID does not) warns.
 
-### Sprint 2 — delivered ([.sprints/2/RESULTS.md](.sprints/2/RESULTS.md))
+## Development
 
-All 19 code stories landed on `main`. The web UI is now a full surface over the API.
-
-- **Server definitions** — create / edit / delete / **clone** in the UI
-  (`POST` / `PATCH` / `DELETE /api/servers`, `POST /api/servers/{id}/clone`). Config tab is a
-  hybrid form (structured common fields + collapsed Advanced with two validated raw-JSON
-  editors), debounced live preview (`POST /api/servers/{id}/config/preview`, no persistence),
-  "applies on next start" banner while running. **Favourites** (star toggle, sort first).
-  **Scenario picker** (`POST /api/scenarios/resolve`, DB-first, Workshop only for uncached
-  GUIDs) with a free-text override.
-- **Mod-set editing** — searchable add-from-library with dependency preview, remove,
-  enable/disable, `@dnd-kit` drag order, inline pin/unpin, one `PATCH` save, pre-flight
-  re-runs. Per-server pins survive a mod-set replace unless the payload overrides them.
-- **Mods** — "add by URL / 16-hex GUID" + inline Workshop search (`POST /api/mods/add`,
-  `GET /api/mods/search?q=`). Mod detail `/mods/:guid`: summary, tags, version history
-  (+ `gameVersion`), resolved dependency tree, `used_by`, pin/unpin, verify. Force
-  re-download (`POST /api/mods/{guid}/download`) behind a free-space guard (NULL `Mod.size`
-  ⇒ 409) shared with `updates/apply`.
-- **Storage** — `GET /api/storage`: per-mod on-disk sizes, free/total, `orphans` and
-  `kept_as_dependency` (orphan = local, unreferenced, and absent from the offline dependency
-  closure of every assigned/packed mod). `DELETE /api/mods/{guid}/local` removes files, keeps
-  the row.
-- **Modpacks** — real page + CRUD API (`/api/modpacks`), drag order, apply-to-server
-  (`replace` reports dropped pins, `append` never unpins), create-from-server, export /
-  import (`on_conflict=rename|replace|error`).
-- **Players & scheduled restart** — Players tab (name/id/IP/ping, auto-refresh), per-row
-  Kick/Ban (`#kick` / `#ban`) behind a confirm. One cancellable in-memory restart schedule
-  per server (`#say` at each `warn_at`, then `#restart`), reload-surviving countdown
-  (`POST` / `GET` / `DELETE /api/servers/{id}/schedule-restart`).
-- **Runtime settings** — `app_settings` singleton (Alembic `0002`). `GET` / `PATCH
-  /api/settings` (nightly check enabled/hour, log-spam patterns; live), `POST
-  /api/auth/password` (verify current, keep session). Console spam filter is DB-driven end to
-  end (WebSocket `is_spam`).
-- **Backup** — `GET /api/backup/export` (definitions + `server_mods` incl. pins and
-  **cleartext passwords** + modpacks; no runtime state / `engine` / mod library).
-  `POST /api/backup/import?dry_run=&on_conflict=skip|replace` returns a per-name plan; a
-  running server is forced to `skip`.
-- **CORS** — `cors_origins` default is now an explicit allow-list, not `["*"]` (`CORS_ORIGINS`
-  in `.env.example`).
-
-Only runtime deps added: `@dnd-kit/core` + `/sortable` + `/utilities`.
-
-**Cut by design:** config-revision diff / rollback — the stored snapshot is the lossy
-generated `config.json`; **clone** (duplicate, edit the copy, delete if bad) replaces it.
-
-### Post-Sprint-2 follow-ups
-
-- **Live E2E harness** — `scripts/e2e_live.py` drives a *running* stack over HTTP (steamcmd
-  engine install → real server start → RCON / A2S / console-log / scheduled-restart → stop;
-  real Workshop mod download → `/api/storage`). See `scripts/README.md`. Four bugs it
-  surfaced, all fixed:
-  1. Engine install aborted on a cold steamcmd appinfo cache — added `+app_info_update 1`
-     before `+app_update`.
-  2. First-ever force-download of any mod always 409'd — `enrich_one` never stored
-     `Mod.size`, so the free-space guard saw NULL. Now taken from the Workshop object
-     (fallback: newest version's size).
-  3. Headless mod downloader rejected by the 1.8.0.10 engine (`scenarioId: ""`) then hung on
-     a block-buffered stdout pipe — valid placeholder scenario; now follows
-     `<profile>/logs/*/console.log` with timeouts.
-  4. Downloaded addons landed in `<mods_dir>` not `<mods_dir>/reforger/addons` — fixed
-     `-addonDownloadDir`; the `mod_download` job now runs a targeted `refresh_local_mods` on
-     success so the row flips `is_local` immediately.
-  Backend suite: 143 → 155.
-- **Jobs page** — rows show relative "started / last update" times (full timestamp on hover);
-  detail dialog gains "Last update"; the WS stream replay carries the timestamps.
-- **Stale library rows** — `DELETE /api/mods/{guid}` deletes a mod's library row outright
-  (+ files if local), guarded like `.../local`. `GET /api/storage` adds `unreferenced_entries`
-  (rows with no files and no references — invisible to the disk-only `orphans` list),
-  surfaced on the Storage page and mod detail as "Remove from library".
+[CLAUDE.md](CLAUDE.md) is the contributor guide: stack layout, how to run the
+backend tests (`pytest` on sqlite — no database needed) and the Vite dev server,
+and the project's gotchas. Non-trivial changes are planned as numbered sprints
+under `.sprints/<n>/` — a scoped `PLAN.md`, a codebase-detailed `STORIES.md`
+split into delegable units, and a `RESULTS.md` written when the work lands.
