@@ -249,3 +249,15 @@ backend tests (`pytest` on sqlite — no database needed) and the Vite dev serve
 and the project's gotchas. Non-trivial changes are planned as numbered sprints
 under `.sprints/<n>/` — a scoped `PLAN.md`, a codebase-detailed `STORIES.md`
 split into delegable units, and a `RESULTS.md` written when the work lands.
+
+## License
+
+Copyright 2026 underlines. reforger-manager is free software distributed under
+the [GNU Affero General Public License v3.0](LICENSE) (SPDX: `AGPL-3.0-only`):
+anyone may use, study, modify and redistribute it, and modified versions offered
+over a network must make their source available under the same license.
+
+Contributions are welcome under the project license — inbound = outbound, no
+contributor agreement required. If your use case cannot meet the AGPL terms
+(e.g. redistributing a closed-source derivative), contact the maintainer to
+arrange an alternative license.
