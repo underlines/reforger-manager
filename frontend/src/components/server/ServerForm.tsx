@@ -117,7 +117,7 @@ const CREATE_DEFAULTS: FormState = {
   rcon_password: "",
   rcon_permission: "admin",
   rcon_max_clients: "16",
-  bind_address: "0.0.0.0",
+  bind_address: "",
   bind_port: "2001",
   public_address: "",
   public_port: "2001",
@@ -790,6 +790,7 @@ export function ServerForm(props: ServerFormProps) {
                   <Input
                     value={form.bind_address}
                     onChange={(event) => set("bind_address", event.target.value)}
+                    placeholder="empty = default interface (same as public_address)"
                   />
                 </Field>
                 <Field label="bind_port">

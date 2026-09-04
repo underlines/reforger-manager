@@ -244,6 +244,21 @@ def _record_workshop_state(mod: Mod, remote: dict[str, Any]) -> None:
     mod.api_checked_at = checked_at
     mod.last_checked = checked_at
 
+    # Self-heal: a never-downloaded mod keeps size = NULL, which the free-space
+    # guard then refuses. Backfill from the payload we already hold (mirroring
+    # the enrich_one chain) ONLY when it is NULL — never clobber a known size.
+    if mod.size is None:
+        api_size = remote.get("size")
+        if api_size is None:
+            versions = remote.get("versions")
+            if isinstance(versions, list) and versions:
+                api_size = versions[0].get("size")
+        if api_size is not None:
+            try:
+                mod.size = int(api_size)
+            except (TypeError, ValueError):
+                pass
+
 
 async def _apply_result(result: dict[str, Any], ctx: "JobContext | None") -> dict[str, Any]:
     updates = result["available_updates"]

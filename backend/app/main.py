@@ -50,7 +50,12 @@ from .core.jobs import JobContext, job_manager
 from .core.security import hash_password
 from . import models  # noqa: F401  (imports every mapped class -> registers metadata)
 from .models import Job, User
-from .mods.downloader import MOD_DOWNLOAD_JOB_KIND, run_mod_download
+from .mods.downloader import (
+    MOD_DOWNLOAD_JOB_KIND,
+    expected_closure,
+    partition_present,
+    run_mod_download,
+)
 from .mods.post_engine_update import ENGINE_POST_UPDATE_JOB_KIND, on_engine_updated
 from .mods.schedule import NightlyCheckScheduler
 from .mods.sync import refresh_local_mods, run_mod_sync
@@ -195,11 +200,31 @@ async def _job_mod_download(ctx: JobContext) -> dict:
     if versions is not None and not isinstance(versions, dict):
         raise ValueError("mod_download versions must be an object")
     result = await run_mod_download(ctx, guids, versions)
+
+    # Verify the expected dependency closure actually landed on disk: the
+    # engine reports success even when it downloaded nothing (e.g. half-written
+    # addon dirs from a crashed run are skipped as "already present"). Retry
+    # the missing subset once, then fail the job carrying the missing list.
+    expected = await expected_closure(ctx, guids)
+    present, missing = partition_present(expected)
+    retried: set[str] = set()
+    if missing:
+        retried = set(missing)
+        await ctx.log(f"closure incomplete, retrying {len(missing)}: {sorted(missing)}")
+        await run_mod_download(
+            ctx,
+            sorted(missing),
+            {g: v for g, v in (versions or {}).items() if str(g).upper() in retried},
+        )
+        present, missing = partition_present(expected)
+    if missing:
+        raise RuntimeError(f"download incomplete; missing on disk: {sorted(missing)}")
+    result["missing_after_retry"] = sorted(missing)
     # Reflect the freshly downloaded addons in the library immediately: flip
     # is_local, pick up on-disk size/version — without waiting for the next
     # full mod_sync.
     try:
-        refreshed = await refresh_local_mods(guids)
+        refreshed = await refresh_local_mods(sorted({str(g).upper() for g in guids} | retried))
         await ctx.log(f"local library refreshed for {len(refreshed)} addon(s): {refreshed}")
         result["refreshed_local"] = refreshed
     except Exception as exc:  # noqa: BLE001 - the download itself already succeeded

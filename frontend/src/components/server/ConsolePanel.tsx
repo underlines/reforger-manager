@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Input } from "../ui";
 import { api, type LogLine, type LogResponse, websocket } from "../../lib/api";
 
@@ -8,9 +8,11 @@ const tailLimit = 500;
 export function ConsolePanel({ id }: { id: string }) {
   const [severity, setSeverity] = useState("");
   const [hideSpam, setHideSpam] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(true);
   const [search, setSearch] = useState("");
   const [tail, setTail] = useState<LogLine[]>([]);
   const [socketState, setSocketState] = useState("connecting");
+  const preRef = useRef<HTMLPreElement>(null);
   const params = new URLSearchParams();
   if (severity) params.set("severity", severity);
   params.set("hide_spam", String(hideSpam));
@@ -55,6 +57,9 @@ export function ConsolePanel({ id }: { id: string }) {
   const displayed = [...(fallback.data?.lines ?? []), ...tail]
     .filter((line) => (!severity || line.severity === severity) && (!hideSpam || !line.is_spam))
     .slice(-tailLimit);
+  useEffect(() => {
+    if (autoScroll) preRef.current?.scrollTo({ top: preRef.current.scrollHeight });
+  }, [autoScroll, displayed.length]);
   return (
     <div className="grid gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -74,6 +79,10 @@ export function ConsolePanel({ id }: { id: string }) {
           <input type="checkbox" checked={hideSpam} onChange={(event) => setHideSpam(event.target.checked)} />
           Hide known spam
         </label>
+        <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" checked={autoScroll} onChange={(event) => setAutoScroll(event.target.checked)} />
+          Autoscroll
+        </label>
         <Button size="sm" variant="ghost" onClick={() => fallback.refetch()} disabled={!search.trim()}>
           Search log
         </Button>
@@ -88,7 +97,7 @@ export function ConsolePanel({ id }: { id: string }) {
         Live tail is bounded to {tailLimit} lines. Stored log search is the fallback.
       </p>
       {fallback.isError && <p className="error">Stored log could not be loaded.</p>}
-      <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words border border-stone-800 bg-stone-950 p-3 text-xs">
+      <pre ref={preRef} className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words border border-stone-800 bg-stone-950 p-3 text-xs">
         {displayed.length
           ? displayed.map((line) => `${line.severity ? `[${line.severity.toUpperCase()}] ` : ""}${line.text}`).join("\n")
           : "No matching log lines received."}

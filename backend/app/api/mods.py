@@ -33,7 +33,7 @@ from ..models import (
     ServerMod,
 )
 from ..mods.downloader import MOD_DOWNLOAD_JOB_KIND
-from ..mods.freespace import check_free_space, estimate_download_bytes, guard_update_scope
+from ..mods.freespace import check_free_space, ensure_sizes, estimate_download_bytes, guard_update_scope
 from ..mods.pinning import CurrentEngineBuildMissing, PinRecordNotFound, pin_mod, unpin_mod
 from ..mods.resolve import resolve_dependencies
 from ..mods.scanner import addons_root, resolve_addon_dir
@@ -274,6 +274,7 @@ async def download_mod(
     mod = await session.get(Mod, guid)
     if mod is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "mod not found")
+    await ensure_sizes(session, [mod])
     projected, _unknown = estimate_download_bytes([mod])
     check_free_space(settings.mods_dir, projected)
     versions = {guid: body.version} if body and body.version else {}

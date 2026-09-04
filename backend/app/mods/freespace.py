@@ -8,6 +8,7 @@ rather than guaranteeing a fit it cannot compute.
 
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 
@@ -17,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
 from ..models import Mod, ServerMod
+from .sync import enrich_one
+from .workshop import workshop
+
+logger = logging.getLogger("reforger.mods.freespace")
 
 
 def estimate_download_bytes(mods: list[Mod]) -> tuple[int | None, list[str]]:
@@ -53,6 +58,25 @@ def check_free_space(mods_dir: Path, projected: int | None) -> None:
         )
 
 
+async def ensure_sizes(session: AsyncSession, mods: list[Mod]) -> None:
+    """Best-effort, one-shot backfill of ``Mod.size`` for never-downloaded rows.
+
+    Used by the free-space guard so a never-downloaded (``is_local``) mod with a
+    NULL size can be sized instead of refusing on "no recorded size". A local row
+    keeps its NULL size — a downloaded addon with no recorded size is an anomaly
+    the guard still refuses rather than guessing. Exactly ONE enrich attempt per
+    affected row; a per-row failure is logged and swallowed so the caller falls
+    through to its existing 409 path with the size still unknown.
+    """
+    for mod in mods:
+        if mod.size is None and not mod.is_local:
+            try:
+                await enrich_one(session, mod.guid, client=workshop)
+                await session.commit()
+            except Exception:  # noqa: BLE001 - one bad row must not block the guard
+                logger.exception("failed to backfill size for %s", mod.guid)
+
+
 async def guard_update_scope(session: AsyncSession, scope: str | int) -> None:
     """Free-space guard for the update-apply scopes (``'all'`` or a server id).
 
@@ -71,5 +95,7 @@ async def guard_update_scope(session: AsyncSession, scope: str | int) -> None:
                 .where(ServerMod.server_id == scope, ServerMod.enabled.is_(True))
             )
         ).scalars().all()
-    projected, _unknown = estimate_download_bytes(list(mods))
+    mods = list(mods)
+    await ensure_sizes(session, mods)
+    projected, _unknown = estimate_download_bytes(mods)
     check_free_space(settings.mods_dir, projected)

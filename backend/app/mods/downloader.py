@@ -19,8 +19,11 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from ..core.config import settings
+from ..core.db import SessionLocal
 from ..models import Mod
 from ..servers.supervisor import supervisor
+from .resolve import ENGINE_BUILTIN_GUIDS, resolve_dependencies
+from .scanner import scan_all
 
 if TYPE_CHECKING:
     from ..core.jobs import JobContext
@@ -375,6 +378,36 @@ async def run_mod_download(
         await ctx.progress(100.0, "no addons requested")
         return {"guids": [], "versions": {}, "progress": 100.0, "downloaded": {}}
     return await _run_engine(ctx, normalised_guids, normalised_versions)
+
+
+def partition_present(expected: set[str]) -> tuple[set[str], set[str]]:
+    """Split ``expected`` into ``(present, missing)`` by on-disk addon dir.
+
+    ``scan_all()`` is a cheap offline disk scan; a directory only counts as
+    present when it carries a ``meta`` file — half-written leftovers from a
+    crashed download do not, so they surface as missing.
+    """
+    on_disk = {mod.guid.upper() for mod in scan_all().mods}
+    wanted = {str(guid).upper() for guid in expected}
+    return wanted & on_disk, wanted - on_disk
+
+
+async def expected_closure(ctx: "JobContext | None", guids: list[str]) -> set[str]:
+    """Resolve the dependency closure of ``guids`` to verify against disk.
+
+    Resolution failures (the Workshop API has been flaky) degrade to the
+    requested set with a log line — they must never fail the download job.
+    """
+    requested = {str(guid).upper() for guid in guids if guid}
+    try:
+        async with SessionLocal() as session:
+            tree = await resolve_dependencies(session, list(requested))
+    except Exception as exc:  # noqa: BLE001 - degraded verification beats a failed job
+        if ctx:
+            await ctx.log(f"closure unresolved, verifying requested set only: {exc}")
+        return set(requested)
+    closure = {node.guid.upper() for node in tree.nodes} - set(ENGINE_BUILTIN_GUIDS)
+    return closure | requested
 
 
 async def ensure_mods_ready(

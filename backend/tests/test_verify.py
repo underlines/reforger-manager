@@ -48,6 +48,16 @@ class FakeProcess:
         self.returncode = -15
 
 
+class ExitedProcess(FakeProcess):
+    """A fake engine process that is already gone; no stdout pipe attached."""
+
+    def __init__(self, returncode: int = 0) -> None:
+        super().__init__([])
+        self.stdout = None
+        self.returncode = returncode
+        self._exit_code = returncode
+
+
 class VerifyRepairTests(unittest.IsolatedAsyncioTestCase):
     def test_build_args_uses_confirmed_flags(self) -> None:
         fake_settings = SimpleNamespace(
@@ -95,6 +105,45 @@ class VerifyRepairTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("-addonsVerify", spawn.await_args.args)
         self.assertNotIn("0123456789abcdef", spawn.await_args.args)
         self.assertTrue(any("entire addon cache" in line for line in ctx.logs))
+
+    async def test_job_follows_engine_console_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "ArmaReforgerServer"
+            binary.touch()
+            fake_settings = SimpleNamespace(
+                reforger_binary=binary, mods_dir=root / "mods", server_dir=root
+            )
+            verified_line = "Addon 0123456789ABCDEF verified"
+            repaired_line = "Addon FEDCBA9876543210 repaired"
+            self.assertRegex(verified_line, verify._VERIFIED_RE)
+            self.assertRegex(repaired_line, verify._REPAIRED_RE)
+            ctx = FakeContext()
+
+            async def fake_spawn(*args, **kwargs):
+                profile = Path(args[args.index("-profile") + 1])
+                log_dir = profile / "logs" / "logs_2026-09-04_00-00-00"
+                log_dir.mkdir(parents=True)
+                (log_dir / "console.log").write_text(
+                    f"{verified_line}\n{repaired_line}\n", encoding="utf-8"
+                )
+                return ExitedProcess(returncode=0)
+
+            with (
+                patch.object(verify, "settings", fake_settings),
+                patch.object(verify.supervisor, "is_running", return_value=False),
+                patch(
+                    "app.mods.verify.asyncio.create_subprocess_exec",
+                    side_effect=fake_spawn,
+                ) as spawn,
+            ):
+                result = await verify.run_verify_repair(ctx)
+
+        self.assertEqual(result, {"checked": 2, "repaired": 1, "failed": 0})
+        self.assertIn("-profile", spawn.await_args.args)
+        self.assertIs(spawn.await_args.kwargs.get("stdout"), asyncio.subprocess.DEVNULL)
+        self.assertIn(verified_line, ctx.logs)
+        self.assertIn(repaired_line, ctx.logs)
 
     async def test_job_refuses_while_server_is_running(self) -> None:
         ctx = FakeContext()
