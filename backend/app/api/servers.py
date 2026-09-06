@@ -47,7 +47,7 @@ from ..mods.logview import (
 from ..mods.freespace import guard_update_scope
 from ..mods.pinning import CurrentEngineBuildMissing, PinRecordNotFound, pin_server_mod, unpin_server_mod
 from ..mods.updates import MOD_UPDATE_APPLY_JOB_KIND, MOD_UPDATE_CHECK_JOB_KIND
-from ..rcon.client import RconClient, RconError, RconTimeoutError
+from ..rcon.client import PlayersResult, RconClient, RconError, RconTimeoutError
 from ..schemas.server import (
     ServerCloneIn,
     ServerConfigOut,
@@ -58,6 +58,7 @@ from ..schemas.server import (
     ServerOut,
     ServerUpdate,
 )
+from ..schemas.rcon import BanCreateIn, BanCreateOut, BanListOut, RconCommandOut
 from ..schemas.job import JobEnqueuedOut
 from ..servers.config_gen import build_config, resolved_mod_entries, write_config
 from ..servers.preflight import preflight
@@ -71,7 +72,7 @@ from .ws import ws_authenticate
 
 router = APIRouter(prefix="/servers", tags=["servers"])
 authed = [Depends(get_current_user)]
-_STATS_HISTORY: dict[int, deque[dict]] = defaultdict(lambda: deque(maxlen=60))
+_STATS_HISTORY: dict[int, deque[dict]] = defaultdict(lambda: deque(maxlen=240))
 _STATS_INTERVAL_SECONDS = 5.0
 
 
@@ -145,21 +146,56 @@ async def _stats(server: Server) -> dict:
     return {"current": sample, "history": list(_STATS_HISTORY[server.id])}
 
 
-async def _rcon(server: Server, command: str | None = None) -> str | list[dict]:
-    if supervisor.active_server_id != server.id or not supervisor.is_running():
-        raise HTTPException(status.HTTP_409_CONFLICT, "that server is not the one running")
-    if not server.rcon_enabled or not server.rcon_password:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "RCON is not configured for this server")
+async def _rcon(server: Server, command: str | None = None, raw: bool = False) -> str | PlayersResult:
+    if command is None:
+        return await _run_rcon(server, lambda client: client.players(), None)
+    if raw:
+        sanitized = _sanitize_raw(command)
+        return await _run_rcon(server, lambda client: client._command(sanitized), command)
+    return await _run_rcon(server, lambda client: client.command(command), command)
+
+
+async def _run_rcon(server: Server, fn, permission_command: str | None) -> str | PlayersResult:
+    """Run ``fn`` on a fresh RCON client, behind the shared guard.
+
+    ``permission_command`` is the command used for the ``rcon_permission``
+    check (the real command when one is being sent) so the enforcement is
+    server-side, never trusted from a client flag.
+    """
+    _rcon_guard(server)
+    _assert_rcon_permission(server, permission_command)
     try:
         async with RconClient() as client:
             await client.connect(_loopback(server.rcon_address), server.rcon_port, server.rcon_password)
-            return await client.command(command) if command is not None else await client.players()
+            return await fn(client)
     except RconTimeoutError as exc:
         raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except RconError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+
+
+def _rcon_guard(server: Server) -> None:
+    if supervisor.active_server_id != server.id or not supervisor.is_running():
+        raise HTTPException(status.HTTP_409_CONFLICT, "that server is not the one running")
+    if not server.rcon_enabled or not server.rcon_password:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "RCON is not configured for this server")
+
+
+def _assert_rcon_permission(server: Server, command: str | None) -> None:
+    """``monitor`` permission is read-only: only #players and @logout run."""
+    if server.rcon_permission == "monitor" and command not in (None, "#players", "@logout"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "monitor RCON permission only allows #players and @logout",
+        )
+
+
+def _sanitize_raw(command: str) -> str:
+    """Strip ASCII control characters and cap the length of a raw command."""
+    cleaned = "".join(ch for ch in command if ord(ch) >= 32 and ord(ch) != 127)
+    return cleaned[:512]
 
 
 @router.get("", response_model=list[ServerOut], dependencies=authed)
@@ -377,16 +413,75 @@ async def unpin_server_assignment(
     return await _load(session, server_id)
 
 
-@router.post("/{server_id}/rcon", dependencies=authed)
+@router.post("/{server_id}/rcon", response_model=RconCommandOut, dependencies=authed)
 async def send_rcon_command(
-    server_id: int, body: RconCommandIn, session: AsyncSession = Depends(get_session)
-) -> dict:
-    return {"response": await _rcon(await _load(session, server_id), body.command)}
+    server_id: int,
+    body: RconCommandIn,
+    raw: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> RconCommandOut:
+    """Run one RCON command; ``?raw=1`` skips the command whitelist.
+
+    The raw path still enforces auth, active-server and ``rcon_permission``
+    (monitor stays read-only) -- only the ``_validate_command`` whitelist is
+    bypassed, so multi-word ``#ban create`` names are reachable here.
+    """
+    response = await _rcon(await _load(session, server_id), body.command, raw=raw)
+    assert isinstance(response, str)
+    return RconCommandOut(response=response)
+
+
+@router.get("/{server_id}/bans", response_model=BanListOut, dependencies=authed)
+async def get_bans(
+    server_id: int,
+    page: int = Query(default=1, ge=1),
+    session: AsyncSession = Depends(get_session),
+) -> BanListOut:
+    server = await _load(session, server_id)
+    bans, raw = await _run_rcon(server, lambda client: client.bans(page), "#ban list")
+    return BanListOut(bans=bans, raw=raw, page=page)
+
+
+@router.post("/{server_id}/bans", response_model=BanCreateOut, dependencies=authed)
+async def create_ban(
+    server_id: int, body: BanCreateIn, session: AsyncSession = Depends(get_session)
+) -> BanCreateOut:
+    """Ban a player for ``duration_seconds``.
+
+    ``identifier`` must be a single token -- a playerId / identityId / a
+    name-without-spaces.  Multi-word player names must use the raw ``POST
+    /rcon?raw=1`` route or an identityId as the identifier.
+    """
+    server = await _load(session, server_id)
+    echo = await _run_rcon(
+        server,
+        lambda client: client.ban_create(body.identifier, body.duration_seconds, body.reason),
+        f"#ban create {body.identifier} {body.duration_seconds}",
+    )
+    assert isinstance(echo, str)
+    return BanCreateOut(echo=echo)
+
+
+@router.delete(
+    "/{server_id}/bans/{identity_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=authed,
+)
+async def remove_ban(
+    server_id: int, identity_id: str, session: AsyncSession = Depends(get_session)
+) -> Response:
+    server = await _load(session, server_id)
+    await _run_rcon(server, lambda client: client.ban_remove(identity_id), f"#ban remove {identity_id}")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{server_id}/players", dependencies=authed)
 async def get_players(server_id: int, session: AsyncSession = Depends(get_session)) -> dict:
-    return {"players": await _rcon(await _load(session, server_id))}
+    # `_rcon` with no command always yields a PlayersResult (parsed rows + the
+    # raw #players text, threaded out as a diagnostic when nothing parsed).
+    result = await _rcon(await _load(session, server_id))
+    assert isinstance(result, PlayersResult)
+    return {"players": result.players, "raw": result.raw}
 
 
 @router.post("/{server_id}/schedule-restart", dependencies=authed)

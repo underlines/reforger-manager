@@ -577,31 +577,6 @@ export function ServerForm(props: ServerFormProps) {
 
   const running = props.mode === "edit" && props.server.is_running;
 
-  /* --------------------- port-collision warning (S7) --------------------- */
-
-  const allServers = useQuery({
-    queryKey: ["servers"],
-    queryFn: () => api<Server[]>("/api/servers"),
-  });
-  const portCollisions = (() => {
-    const others = (allServers.data ?? []).filter((other) => other.id !== serverId);
-    const messages: string[] = [];
-    for (const [field, raw] of [
-      ["bind_port", form.bind_port],
-      ["a2s_port", form.a2s_port],
-      ["rcon_port", form.rcon_port],
-    ] as const) {
-      const port = Number(raw.trim());
-      if (!/^\d+$/.test(raw.trim())) continue;
-      for (const other of others) {
-        if (other[field] === port) {
-          messages.push(`Port ${port} is also used by '${other.name}'`);
-        }
-      }
-    }
-    return messages;
-  })();
-
   /* ------------------------------ render ------------------------------ */
 
   return (
@@ -862,21 +837,6 @@ export function ServerForm(props: ServerFormProps) {
               </label>
             </div>
           </details>
-
-          {portCollisions.length > 0 && (
-            <div className="border border-amber-700 bg-amber-950/50 px-3 py-2 text-xs text-amber-300">
-              <p className="font-bold uppercase tracking-wide">Port collisions</p>
-              <ul className="mt-1 list-disc pl-4">
-                {portCollisions.map((message) => (
-                  <li key={message}>{message}</li>
-                ))}
-              </ul>
-              <p className="mt-1 text-amber-400/80">
-                Not a runtime conflict (only one server runs at a time), but edit them before
-                running the definitions interchangeably. Saving is unaffected.
-              </p>
-            </div>
-          )}
 
           <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" disabled={!canSubmit}>

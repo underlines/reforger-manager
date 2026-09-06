@@ -7,11 +7,11 @@ import { ConfigPanel } from "../components/server/ConfigPanel";
 import { FilesPanel } from "../components/server/FilesPanel";
 import { HistoryPanel } from "../components/server/HistoryPanel";
 import { ModsPanel } from "../components/server/ModsPanel";
-import { PlayersPanel } from "../components/server/PlayersPanel";
+import { RconPanel } from "../components/server/RconPanel";
 import { Badge, Button, Card, CardContent, Dialog, Input } from "../components/ui";
 import { api, apiClient, type DetailServer, type Server } from "../lib/api";
 
-const tabs = ["Config", "Mods", "Files", "Console", "Players", "History"] as const;
+const tabs = ["Config", "Mods", "Files", "Console", "RCON", "History"] as const;
 type Tab = (typeof tabs)[number];
 
 export function ServerDetailPage() {
@@ -147,7 +147,7 @@ export function ServerDetailPage() {
           {tab === "Mods" && <ModsPanel id={id} server={server} action={action} run={run} />}
           {tab === "Files" && <FilesPanel id={id} server={server} />}
           {tab === "Console" && <ConsolePanel id={id} />}
-          {tab === "Players" && <PlayersPanel id={id} />}
+          {tab === "RCON" && <RconPanel id={id} />}
           {tab === "History" && <HistoryPanel id={id} />}
         </CardContent>
       </Card>

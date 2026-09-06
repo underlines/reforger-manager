@@ -14,6 +14,7 @@ export function ServersPage() {
   const servers = [...(query.data ?? [])].sort(
     (a, b) => Number(b.is_favourite) - Number(a.is_favourite),
   );
+  const runningServer = servers.find((server) => server.is_running);
 
   return (
     <>
@@ -44,9 +45,9 @@ export function ServersPage() {
           {query.isLoading ? (
             <p>Loading definitions...</p>
           ) : servers.length ? (
-            <div className="list">
+            <div className="roster">
               {servers.map((server) => (
-                <ServerRow key={server.id} server={server} />
+                <ServerRow key={server.id} server={server} runningServer={runningServer} />
               ))}
             </div>
           ) : (

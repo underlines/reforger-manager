@@ -12,6 +12,7 @@
 .env.*
 !.env.example
 opencode.json
+.mcp.json
 
 # --- Python ---
 __pycache__/
@@ -40,3 +41,13 @@ Thumbs.db
 
 # --- Claude Code ---
 .claude/
+
+# --- Local tooling ---
+.backups/
+.opencode/
+
+# --- Local docs / fixtures not tracked upstream ---
+docs/mod-fixtures/
+docs/dynamic-war-server-research.md
+docs/mcp-gap-tools.md
+docs/rcon-reforger-spec.md

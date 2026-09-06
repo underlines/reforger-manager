@@ -1,13 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Empty } from "../Empty";
 import { SortableModList, type SortableRow } from "../mods/SortableModList";
 import { Badge, Button, Dialog, Input } from "../ui";
 import {
   api,
+  ApiError,
   type DetailServer,
   type Mod,
+  type Modpack,
   type Preflight,
   type Server,
   type ServerMod,
@@ -31,6 +33,16 @@ type WorkingMod = SortableRow & {
 
 type DepNode = { guid: string; name: string | null; via: string; state: string; depth: number };
 type ModDeps = { dependency_tree: { nodes: DepNode[] } | null };
+
+/** Stable empty set for rows that cover nothing (avoids a new Set() each render). */
+const EMPTY_GUIDS: ReadonlySet<string> = new Set<string>();
+
+/* Response of POST /api/modpacks/{pack_id}/apply/{server_id} — a ModpackApplyOut. */
+export type ApplyModpackResult = {
+  applied: number;
+  mode: "replace" | "append";
+  dropped_pins: Array<{ mod_guid: string; mod_name: string | null }>;
+};
 
 /* Response of POST /api/modpacks/from-server/{id} — a ModpackOut, possibly with
  * a note that the source server's pins were not carried into the pack. Shape may
@@ -116,9 +128,16 @@ export function ModsPanel({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
+  // Pre-flight runs on request only — never on mount / focus / reconnect. The
+  // toolbar "Refresh pre-flight" button and the post-save / post-pin /
+  // post-modpack-apply hooks below call `refetch()` explicitly.
   const preflight = useQuery({
     queryKey: ["server-preflight", id],
     queryFn: () => api<Preflight>(`/api/servers/${id}/preflight`),
+    enabled: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const tone =
     preflight.data?.verdict === "green"
@@ -191,37 +210,14 @@ export function ModsPanel({
     pinned_at: null,
   });
 
-  // Add a mod and any of its dependencies not already in the set (dependencies
-  // first). The generated config resolves the closure regardless, but listing
-  // the deps explicitly lets them be reordered / pinned per server.
-  const addModWithDeps = async (mod: Mod) => {
-    let nodes: DepNode[] = [];
-    try {
-      const detail = await queryClient.fetchQuery({
-        queryKey: ["mod", mod.guid, "deps"],
-        queryFn: () => api<ModDeps>(`/api/mods/${mod.guid}`),
-        staleTime: 60_000,
-      });
-      nodes = detail.dependency_tree?.nodes ?? [];
-    } catch {
-      // Dependency lookup failed — still add the mod itself.
-    }
+  // Dependencies are resolved into the generated config at start time
+  // (config_gen closure) — the assigned list holds only explicit picks.
+  const addMod = (mod: Mod) => {
     setWorking((current) => {
       const present = new Set(current.map((row) => row.mod_guid));
-      const additions: WorkingMod[] = [];
-      for (const node of [...nodes].sort((a, b) => b.depth - a.depth)) {
-        if (
-          node.guid === mod.guid ||
-          node.state === "unresolved" ||
-          present.has(node.guid) ||
-          additions.some((row) => row.mod_guid === node.guid)
-        ) {
-          continue;
-        }
-        additions.push(makeWorkingMod(node.guid, node.name));
-      }
-      if (!present.has(mod.guid)) additions.push(makeWorkingMod(mod.guid, mod.name));
-      return additions.length ? [...current, ...additions] : current;
+      return present.has(mod.guid)
+        ? current
+        : [...current, makeWorkingMod(mod.guid, mod.name)];
     });
   };
   const discard = () => {
@@ -229,6 +225,113 @@ export function ModsPanel({
     setWorking(next);
     setBaseline(next);
   };
+
+  /* -------------------- dependency-aware dedup (view only) -------------------- *
+   * The assigned list carries every explicit pick. But when one explicit pick
+   * already pulls another in through its dependency closure, the covered pick is
+   * hoisted out of the top-level list and shown under its covering parent(s).
+   * Nothing is deleted — a covered row keeps its slot in `working`, its enable
+   * toggle and its pin; only where it renders moves. It returns to the top level
+   * once no covering parent remains.
+   * ------------------------------------------------------------------------- */
+
+  // One deps query per explicit pick, keyed exactly like AddModRow /
+  // AssignedModExpanded so the three share a single cache entry.
+  const depResults = useQueries({
+    queries: working.map((mod) => ({
+      queryKey: ["mod", mod.mod_guid, "deps"],
+      queryFn: () => api<ModDeps>(`/api/mods/${mod.mod_guid}`),
+      staleTime: 60_000,
+    })),
+  });
+
+  // Signature that changes only when a deps query gains/loses data — keeps the
+  // memo below from recomputing on every unrelated render.
+  const depSig = depResults
+    .map((result) => (result.data ? String(result.dataUpdatedAt) : result.status))
+    .join("|");
+
+  // guid -> set of directly-declared, resolved dependency guids (undefined while
+  // that query is still loading → "covers nothing" for now).
+  const depEdges = useMemo(() => {
+    const map = new Map<string, Set<string> | undefined>();
+    working.forEach((mod, index) => {
+      const data = depResults[index]?.data;
+      if (!data) {
+        map.set(mod.mod_guid, undefined);
+        return;
+      }
+      const nodes = data.dependency_tree?.nodes ?? [];
+      map.set(
+        mod.mod_guid,
+        new Set(
+          nodes
+            .filter((node) => node.depth > 0 && node.state !== "unresolved")
+            .map((node) => node.guid),
+        ),
+      );
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [working, depSig]);
+
+  // parent guid -> every OTHER explicit pick reachable through its closure.
+  // Walked with a visited set so A→B→A metadata can't loop.
+  const coverageByParent = useMemo(() => {
+    const explicit = new Set(working.map((mod) => mod.mod_guid));
+    const map = new Map<string, Set<string>>();
+    for (const parent of working) {
+      const reached = new Set<string>();
+      const seen = new Set<string>([parent.mod_guid]);
+      const stack = [...(depEdges.get(parent.mod_guid) ?? [])];
+      while (stack.length) {
+        const guid = stack.pop() as string;
+        if (seen.has(guid)) continue;
+        seen.add(guid);
+        if (explicit.has(guid)) reached.add(guid);
+        const next = depEdges.get(guid);
+        if (next) for (const g of next) if (!seen.has(g)) stack.push(g);
+      }
+      reached.delete(parent.mod_guid);
+      map.set(parent.mod_guid, reached);
+    }
+    return map;
+  }, [working, depEdges]);
+
+  const covered = useMemo(() => {
+    const set = new Set<string>();
+    for (const reached of coverageByParent.values())
+      for (const guid of reached) set.add(guid);
+    return set;
+  }, [coverageByParent]);
+
+  // Only uncovered rows reach the sortable list; DnD / save still act on the
+  // full `working` array (see `reorderVisible`).
+  const topLevel = useMemo(
+    () => working.filter((mod) => !covered.has(mod.mod_guid)),
+    [working, covered],
+  );
+
+  // A drag reorders `topLevel`; splice that order back into `working`, leaving
+  // covered rows pinned to the slots they already hold.
+  const reorderVisible = (nextVisible: WorkingMod[]) => {
+    setWorking((current) => {
+      const queue = [...nextVisible];
+      return current.map((row) =>
+        covered.has(row.mod_guid) ? row : queue.shift() ?? row,
+      );
+    });
+  };
+
+  // Per-row "show dependencies" disclosure for the top-level list.
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (guid: string) =>
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(guid)) next.delete(guid);
+      else next.add(guid);
+      return next;
+    });
 
   /* ------------------------------ save ------------------------------ */
 
@@ -372,6 +475,51 @@ export function ModsPanel({
     if (packName.trim()) savePack.mutate();
   };
 
+  /* ----------------------- load a modpack into this server ----------------------- */
+
+  const [loadOpen, setLoadOpen] = useState(false);
+  const [loadPackId, setLoadPackId] = useState("");
+  const [loadMode, setLoadMode] = useState<"replace" | "append">("replace");
+  const [loadResult, setLoadResult] = useState<ApplyModpackResult | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const packs = useQuery({
+    queryKey: ["modpacks"],
+    queryFn: () => api<Modpack[]>("/api/modpacks"),
+    enabled: loadOpen,
+  });
+
+  const applyPack = useMutation({
+    mutationFn: () =>
+      api<ApplyModpackResult>(`/api/modpacks/${loadPackId}/apply/${id}`, {
+        method: "POST",
+        body: JSON.stringify({ mode: loadMode }),
+      }),
+    onSuccess: async (result) => {
+      setLoadResult(result);
+      setLoadError(null);
+      await queryClient.invalidateQueries({ queryKey: ["server", id] });
+      await queryClient.invalidateQueries({ queryKey: ["servers"] });
+      void preflight.refetch();
+    },
+    onError: (error) => {
+      setLoadResult(null);
+      setLoadError(
+        error instanceof ApiError && error.status === 409
+          ? "Stop the server before applying a modpack."
+          : errText(error, "Apply failed"),
+      );
+    },
+  });
+
+  const openLoadDialog = () => {
+    setLoadResult(null);
+    setLoadError(null);
+    setLoadPackId("");
+    setLoadMode("replace");
+    setLoadOpen(true);
+  };
+
   /* ------------------------------ render ------------------------------ */
 
   return (
@@ -385,7 +533,16 @@ export function ModsPanel({
             setPackOpen(true);
           }}
         >
-          Save as modpack
+          Snapshot to modpack...
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={dirty}
+          title={dirty ? "Save or discard your staged changes first" : undefined}
+          onClick={openLoadDialog}
+        >
+          Load modpack...
         </Button>
         <Button
           size="sm"
@@ -410,7 +567,7 @@ export function ModsPanel({
         >
           {action === "update-apply" ? "Queueing..." : "Apply updates"}
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => preflight.refetch()}>
+        <Button size="sm" variant="outline" onClick={() => preflight.refetch()}>
           Refresh pre-flight
         </Button>
       </div>
@@ -430,7 +587,11 @@ export function ModsPanel({
 
       <section>
         <p className="metric-label">Deployment pre-flight</p>
-        {preflight.isLoading ? (
+        {!preflight.isFetched && !preflight.isFetching ? (
+          <p className="text-xs text-stone-400">
+            Pre-flight has not run yet — press Refresh pre-flight.
+          </p>
+        ) : preflight.isFetching ? (
           <p>Checking assigned mods and dependencies...</p>
         ) : preflight.isError ? (
           <p className="error">Pre-flight could not be loaded.</p>
@@ -483,6 +644,7 @@ export function ModsPanel({
             <Button
               size="sm"
               disabled={!dirty || save.isPending}
+              title={dirty ? undefined : "No unsaved changes"}
               onClick={() => save.mutate()}
             >
               {save.isPending ? "Saving..." : "Save mod set"}
@@ -502,8 +664,17 @@ export function ModsPanel({
 
         {working.length ? (
           <SortableModList
-            items={working}
-            onReorder={setWorking}
+            items={topLevel}
+            onReorder={reorderVisible}
+            renderName={(mod) => (
+              <Link
+                to={`/mods/${mod.mod_guid}`}
+                className="hover:text-amber-400"
+                onClick={(event) => event.stopPropagation()}
+              >
+                {mod.mod_name ?? mod.mod_guid}
+              </Link>
+            )}
             renderMeta={(mod) => (
               <span className="flex flex-wrap items-center gap-2 pt-1">
                 {!mod.enabled && <Badge tone="neutral">Disabled</Badge>}
@@ -515,8 +686,18 @@ export function ModsPanel({
             )}
             renderActions={(mod) => {
               const persisted = persistedGuids.has(mod.mod_guid);
+              const open = expandedRows.has(mod.mod_guid);
               return (
                 <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-expanded={open}
+                    aria-label={open ? "Hide dependencies" : "Show dependencies"}
+                    onClick={() => toggleExpanded(mod.mod_guid)}
+                  >
+                    {open ? "▾" : "▸"}
+                  </Button>
                   <Button
                     size="sm"
                     variant="ghost"
@@ -554,6 +735,21 @@ export function ModsPanel({
                 </>
               );
             }}
+            renderExpanded={(mod) =>
+              expandedRows.has(mod.mod_guid) ? (
+                <AssignedModExpanded
+                  parent={mod}
+                  working={working}
+                  coverageGuids={coverageByParent.get(mod.mod_guid) ?? EMPTY_GUIDS}
+                  explicitGuids={workingGuids}
+                  persistedGuids={persistedGuids}
+                  pinBusy={pinBusy}
+                  onSetEnabled={setEnabled}
+                  onOpenPin={openPinDialog}
+                  onUnpin={(guid) => unpinMutation.mutate(guid)}
+                />
+              ) : null
+            }
           />
         ) : (
           <Empty label="No mods assigned to this definition." />
@@ -594,7 +790,7 @@ export function ModsPanel({
                 key={mod.guid}
                 mod={mod}
                 existingGuids={workingGuids}
-                onAdd={() => void addModWithDeps(mod)}
+                onAdd={() => void addMod(mod)}
               />
             ))}
           </ul>
@@ -652,13 +848,14 @@ export function ModsPanel({
 
       <Dialog
         open={packOpen}
-        title="Save current mod set as a pack"
+        title="Snapshot this mod set to a modpack"
         onClose={() => !savePack.isPending && setPackOpen(false)}
       >
         <form className="space-y-4" onSubmit={submitPack}>
           <p className="text-xs leading-5 text-stone-400">
-            Snapshots this definition's saved mod set and load order into a new reusable pack.
-            Version pins are not carried into the pack — a pack is a mod list, not a version lock.
+            Creates a new reusable modpack from this definition's <strong>last saved</strong> mod
+            set and load order. Version pins are not carried into the pack — a pack is a mod list,
+            not a version lock.
           </p>
           {dirty && (
             <p className="text-[11px] text-amber-300">
@@ -699,6 +896,106 @@ export function ModsPanel({
             </Button>
           </div>
         </form>
+      </Dialog>
+
+      <Dialog
+        open={loadOpen}
+        title="Load a modpack into this server"
+        onClose={() => !applyPack.isPending && setLoadOpen(false)}
+      >
+        <div className="space-y-4">
+          {packs.isLoading ? (
+            <p className="text-xs text-stone-400">Loading modpacks...</p>
+          ) : packs.isError ? (
+            <p className="error">{errText(packs.error, "Could not load modpacks.")}</p>
+          ) : packs.data?.length === 0 ? (
+            <p className="text-xs leading-5 text-stone-400">
+              No modpacks yet — create one with <strong>Snapshot to modpack</strong>.
+            </p>
+          ) : (
+            <>
+              <label className="block space-y-1 text-xs text-stone-300">
+                <span>Modpack</span>
+                <select
+                  className="h-10 w-full border border-stone-600 bg-stone-950 px-3 text-sm text-stone-100"
+                  value={loadPackId}
+                  onChange={(event) => setLoadPackId(event.target.value)}
+                >
+                  <option value="">Select a modpack...</option>
+                  {(packs.data ?? []).map((pack) => (
+                    <option key={pack.id} value={String(pack.id)}>
+                      {pack.name} ({pack.items.length} mods)
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <fieldset className="space-y-2">
+                <legend className="text-xs text-stone-300">Mode</legend>
+                <label className="flex items-center gap-2 text-xs text-stone-300">
+                  <input
+                    type="radio"
+                    name="load-mode"
+                    checked={loadMode === "replace"}
+                    onChange={() => setLoadMode("replace")}
+                  />
+                  Replace — clear the server's mod set, then write the pack
+                </label>
+                <label className="flex items-center gap-2 text-xs text-stone-300">
+                  <input
+                    type="radio"
+                    name="load-mode"
+                    checked={loadMode === "append"}
+                    onChange={() => setLoadMode("append")}
+                  />
+                  Append — add the pack's mods, keeping what is already there
+                </label>
+              </fieldset>
+
+              <p className="text-xs text-stone-400">
+                Applies immediately and needs the server stopped. Replace drops version pins on
+                mods the pack doesn't contain. All applied mods are set enabled.
+              </p>
+            </>
+          )}
+
+          {loadError && <p className="error">{loadError}</p>}
+          {loadResult && (
+            <div className="space-y-1 text-xs text-emerald-400">
+              <p>
+                Applied {loadResult.applied} mod{loadResult.applied === 1 ? "" : "s"}.
+              </p>
+              {loadResult.dropped_pins.length > 0 && (
+                <p className="text-amber-300">
+                  These pins were dropped because their mod left the set:{" "}
+                  {loadResult.dropped_pins
+                    .map((pin) => pin.mod_name ?? pin.mod_guid)
+                    .join(", ")}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setLoadOpen(false)}
+              disabled={applyPack.isPending}
+            >
+              {loadResult ? "Done" : "Cancel"}
+            </Button>
+            {packs.data && packs.data.length > 0 && (
+              <Button
+                type="button"
+                onClick={() => applyPack.mutate()}
+                disabled={applyPack.isPending || !loadPackId}
+              >
+                {applyPack.isPending ? "Applying..." : "Apply modpack"}
+              </Button>
+            )}
+          </div>
+        </div>
       </Dialog>
     </div>
   );
@@ -767,5 +1064,136 @@ function AddModRow({
         </div>
       )}
     </li>
+  );
+}
+
+/* Expanded subtree under one assigned pick: its resolved dependency closure
+ * (read-only links) plus any OTHER explicit picks it covers, rendered with their
+ * own enable / pin controls so a covered pick keeps every control it had at the
+ * top level. Shares the ["mod", guid, "deps"] cache with AddModRow / the dedup
+ * `useQueries` above. */
+function AssignedModExpanded({
+  parent,
+  working,
+  coverageGuids,
+  explicitGuids,
+  persistedGuids,
+  pinBusy,
+  onSetEnabled,
+  onOpenPin,
+  onUnpin,
+}: {
+  parent: WorkingMod;
+  working: WorkingMod[];
+  coverageGuids: ReadonlySet<string>;
+  explicitGuids: Set<string>;
+  persistedGuids: Set<string>;
+  pinBusy: boolean;
+  onSetEnabled: (guid: string, enabled: boolean) => void;
+  onOpenPin: (mod: WorkingMod) => void;
+  onUnpin: (guid: string) => void;
+}) {
+  const deps = useQuery({
+    queryKey: ["mod", parent.mod_guid, "deps"],
+    queryFn: () => api<ModDeps>(`/api/mods/${parent.mod_guid}`),
+    staleTime: 60_000,
+  });
+
+  const nodes = deps.data?.dependency_tree?.nodes ?? [];
+  // Pure dependency nodes: depth > 0 and NOT themselves an explicit pick (those
+  // render below as pick-styled rows instead). Sorted by depth then name.
+  const pureNodes = [...nodes]
+    .filter((node) => node.depth > 0 && !explicitGuids.has(node.guid))
+    .sort(
+      (a, b) =>
+        a.depth - b.depth || (a.name ?? a.guid).localeCompare(b.name ?? b.guid),
+    );
+  const picks = working.filter((row) => coverageGuids.has(row.mod_guid));
+
+  return (
+    <div className="mt-2 w-full space-y-1.5 border-l-2 border-stone-800 pl-3 text-[11px] text-stone-400">
+      {picks.map((row) => {
+        const persisted = persistedGuids.has(row.mod_guid);
+        return (
+          <div key={row.mod_guid} className="flex flex-wrap items-center gap-2">
+            <Link
+              to={`/mods/${row.mod_guid}`}
+              className="font-display uppercase tracking-wide text-stone-200 hover:text-amber-400"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {row.mod_name ?? row.mod_guid}
+            </Link>
+            <Badge tone="neutral">pick</Badge>
+            {!row.enabled && <Badge tone="neutral">Disabled</Badge>}
+            {row.pinned_version && <Badge tone="warn">Pinned {row.pinned_version}</Badge>}
+            {!row.enabled && parent.enabled && (
+              <Badge tone="warn">
+                loaded as a dependency of {parent.mod_name ?? parent.mod_guid}
+              </Badge>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onSetEnabled(row.mod_guid, !row.enabled)}
+            >
+              {row.enabled ? "Disable" : "Enable"}
+            </Button>
+            {row.pinned_version ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!persisted || pinBusy}
+                onClick={() => onUnpin(row.mod_guid)}
+              >
+                Unpin
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!persisted || pinBusy}
+                title={persisted ? undefined : "Save the mod set before pinning"}
+                onClick={() => onOpenPin(row)}
+              >
+                Pin version
+              </Button>
+            )}
+          </div>
+        );
+      })}
+
+      {deps.isLoading ? (
+        <p>...</p>
+      ) : deps.isError ? (
+        <p className="error">Dependency lookup failed.</p>
+      ) : pureNodes.length ? (
+        pureNodes.map((node) => (
+          <div
+            key={`${node.guid}-${node.depth}`}
+            className="flex flex-wrap items-center gap-2"
+          >
+            {node.state === "unresolved" ? (
+              <>
+                <span className="font-mono text-stone-500">{node.guid}</span>
+                <Badge tone="warn">unresolved</Badge>
+              </>
+            ) : (
+              <>
+                <Link
+                  to={`/mods/${node.guid}`}
+                  className="text-stone-300 hover:text-amber-400"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {node.name ?? node.guid}
+                </Link>
+                <span className="text-stone-500">via {node.via}</span>
+              </>
+            )}
+          </div>
+        ))
+      ) : picks.length ? null : (
+        <p>No dependencies.</p>
+      )}
+    </div>
   );
 }

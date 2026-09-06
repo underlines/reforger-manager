@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Badge } from "../ui";
+import { Badge, Button } from "../ui";
 import { api, type Server } from "../../lib/api";
 
-export function ServerRow({ server }: { server: Server }) {
+export function ServerRow({ server, runningServer }: { server: Server; runningServer?: Server }) {
   const queryClient = useQueryClient();
   const favourite = useMutation({
     mutationFn: () =>
@@ -14,6 +14,24 @@ export function ServerRow({ server }: { server: Server }) {
         body: JSON.stringify({ is_favourite: !server.is_favourite }),
       }),
     onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["servers"] });
+      await queryClient.invalidateQueries({ queryKey: ["server", String(server.id)] });
+    },
+  });
+  const power = useMutation({
+    mutationFn: async () => {
+      if (server.is_running) {
+        await api(`/api/servers/${server.id}/stop`, { method: "POST" });
+        return;
+      }
+      // Single-server rule: starting this one first stops whoever is running.
+      if (runningServer && runningServer.id !== server.id) {
+        if (!window.confirm(`Stop '${runningServer.name}' and start '${server.name}'?`)) return;
+        await api(`/api/servers/${runningServer.id}/stop`, { method: "POST" });
+      }
+      await api(`/api/servers/${server.id}/start`, { method: "POST" });
+    },
+    onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: ["servers"] });
       await queryClient.invalidateQueries({ queryKey: ["server", String(server.id)] });
     },
@@ -40,8 +58,23 @@ export function ServerRow({ server }: { server: Server }) {
         <strong>{server.name}</strong>
         <small>{server.scenario_game_id ?? "No scenario selected"}</small>
       </span>
-      <span>{server.mods.length} mods</span>
-      <Badge tone={server.is_running ? "good" : "neutral"}>{server.is_running ? "Running" : "Standby"}</Badge>
+      <span className="row-mods">{server.mods.length} mods</span>
+      <Badge className="row-status" tone={server.is_running ? "good" : "neutral"}>
+        {server.is_running ? "Running" : "Standby"}
+      </Badge>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={power.isPending}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          power.mutate();
+        }}
+      >
+        {server.is_running ? "Stop" : "Start"}
+      </Button>
+      {power.error && <p className="error">{power.error.message}</p>}
     </Link>
   );
 }

@@ -32,6 +32,8 @@ class ServerBase(BaseModel):
     max_players: int = 32
     visible: bool = True
     game_properties: dict | None = None
+    # Identity ids (UUID strings) promoted to in-game admins -> config game.admins.
+    game_admins: list[str] | None = None
     extra_config: dict | None = None
 
     bind_address: str = "0.0.0.0"
@@ -65,6 +67,7 @@ class ServerUpdate(BaseModel):
     max_players: int | None = None
     visible: bool | None = None
     game_properties: dict | None = None
+    game_admins: list[str] | None = None
     extra_config: dict | None = None
     bind_address: str | None = None
     bind_port: int | None = None

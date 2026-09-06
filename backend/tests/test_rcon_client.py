@@ -2,7 +2,14 @@ import asyncio
 
 import pytest
 
-from app.rcon.client import RconAuthenticationError, RconClient, decode_packet, encode_packet, parse_players
+from app.rcon.client import (
+    RconAuthenticationError,
+    RconClient,
+    decode_packet,
+    encode_packet,
+    parse_bans,
+    parse_players,
+)
 
 
 class BattleyeServer(asyncio.DatagramProtocol):
@@ -45,6 +52,8 @@ async def test_authentication_and_command_response():
             return [b"\x00\x01"]
         if payload[:2] == b"\x01\x00":
             return [b"\x01\x00ok"]
+        if payload[:2] == b"\x01\x01":  # @logout sent on close
+            return [b"\x01\x01ok"]
         return []
 
     transport, server, port = await start_server(handler)
@@ -52,7 +61,8 @@ async def test_authentication_and_command_response():
         async with RconClient() as client:
             await client.connect("127.0.0.1", port, "secret")
             assert await client.command("#restart") == "ok"
-        assert server.received == [b"\x00secret", b"\x01\x00#restart"]
+        # A best-effort @logout frees the server-side RCON slot on close.
+        assert server.received == [b"\x00secret", b"\x01\x00#restart", b"\x01\x01@logout"]
     finally:
         transport.close()
 
@@ -87,15 +97,126 @@ async def test_multipart_response_is_reassembled_out_of_order():
         transport.close()
 
 
-def test_players_parser_preserves_variable_fields_and_raw_lines():
-    response = "Players on server:\n#1 76561198000000000 Alice Example 192.168.1.50:2304 42\n2 Bob\n"
-    assert parse_players(response) == [
+REFORGER_PLAYERS = (
+    "Players on server:\n"
+    "0 ; 1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809 ; underlines\n"
+    "1 ; 9f8e7d6c-5b4a-3210-fedc-ba9876543210 ; Some Player\n"
+)
+
+
+def _fields(record):
+    return {key: record[key] for key in ("id", "name", "uid", "ip", "ping")}
+
+
+def test_players_parser_reads_reforger_semicolon_rows():
+    records = parse_players(REFORGER_PLAYERS)
+    assert [_fields(record) for record in records] == [
+        {
+            "id": 0,
+            "name": "underlines",
+            "uid": "1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809",
+            "ip": None,
+            "ping": None,
+        },
         {
             "id": 1,
-            "name": "Alice Example",
-            "ip": "192.168.1.50",
-            "ping": 42,
-            "raw": "#1 76561198000000000 Alice Example 192.168.1.50:2304 42",
+            "name": "Some Player",
+            "uid": "9f8e7d6c-5b4a-3210-fedc-ba9876543210",
+            "ip": None,
+            "ping": None,
         },
-        {"id": 2, "name": "Bob", "ip": None, "ping": None, "raw": "2 Bob"},
     ]
+
+
+def test_players_parser_skips_header_echo_and_count_lines():
+    response = (
+        "processing command: players\n"
+        "Players on server:\n"
+        "0 ; 1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809 ; underlines\n"
+        "2 players\n"
+    )
+    assert [_fields(record) for record in parse_players(response)] == [
+        {
+            "id": 0,
+            "name": "underlines",
+            "uid": "1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809",
+            "ip": None,
+            "ping": None,
+        }
+    ]
+
+
+def test_players_parser_falls_back_to_legacy_space_separated_rows():
+    records = parse_players("#1 76561198000000000 Alice Example 192.168.1.50:2304 42\n")
+    assert _fields(records[0]) == {
+        "id": 1,
+        "name": "Alice Example",
+        "uid": None,
+        "ip": "192.168.1.50",
+        "ping": 42,
+    }
+
+
+def test_players_parser_returns_empty_for_empty_and_unknown_command_replies():
+    assert parse_players("") == []
+    assert parse_players("Unknown command") == []
+
+
+def test_validate_command_accepts_new_ban_forms():
+    for command in (
+        "#ban create 1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809 3600",
+        "#ban create 76561198000000000 0",
+        "#ban create Alice 86400 going on holiday",
+        "#ban remove 1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809",
+        "#ban list",
+        "#ban list 2",
+        "@logout",
+    ):
+        RconClient._validate_command(command)
+
+
+def test_validate_command_rejects_unsafe_forms():
+    for command in (
+        "#ban wipe",
+        "#ban create x -1",
+        "#ban create a b",
+        "#ban create Alice Example 3600",  # multi-word name is not addressable
+        "rm -rf /",
+        "@login",
+    ):
+        try:
+            RconClient._validate_command(command)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for {command!r}")
+
+
+BANS_REPLY = (
+    "processing command: bans\n"
+    "Ban list (page 1):\n"
+    "0 ; 1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809 ; 3600\n"
+    "1 ; 9f8e7d6c-5b4a-3210-fedc-ba9876543210 ; permanent\n"
+    "2 bans\n"
+)
+
+
+def test_bans_parser_reads_rows_and_skips_header_echo_and_count():
+    assert parse_bans(BANS_REPLY) == [
+        {
+            "ban_id": "0",
+            "uid": "1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809",
+            "duration": "3600",
+            "raw": "0 ; 1a2b3c4d-5e6f-7081-92a3-b4c5d6e7f809 ; 3600",
+        },
+        {
+            "ban_id": "1",
+            "uid": "9f8e7d6c-5b4a-3210-fedc-ba9876543210",
+            "duration": "permanent",
+            "raw": "1 ; 9f8e7d6c-5b4a-3210-fedc-ba9876543210 ; permanent",
+        },
+    ]
+
+
+def test_bans_parser_returns_empty_for_empty_and_unknown_command_replies():
+    assert parse_bans("") == []
+    assert parse_bans("Unknown command") == []

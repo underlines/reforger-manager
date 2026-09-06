@@ -40,6 +40,9 @@ class Server(Base, TimestampMixin):
     max_players: Mapped[int] = mapped_column(Integer, default=32)
     visible: Mapped[bool] = mapped_column(Boolean, default=True)
     game_properties: Mapped[dict | None] = mapped_column(JSONVariant)
+    # Persistent per-server admin list -> generated config ``game.admins``.
+    # Holds identity ids (UUID strings from ``#players``), never playerIds.
+    game_admins: Mapped[list[str] | None] = mapped_column(JSONVariant)
     # Verbatim keys merged last into the generated config (escape hatch).
     extra_config: Mapped[dict | None] = mapped_column(JSONVariant)
 

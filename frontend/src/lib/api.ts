@@ -34,6 +34,7 @@ export type Server = {
   bind_port: number;
   a2s_port: number;
   rcon_port: number;
+  game_admins?: string[] | null;
   mods: ServerMod[];
 };
 export type ModRef = { guid: string; name: string | null };
@@ -112,8 +113,11 @@ export type Player = {
   name?: string;
   ip?: string;
   ping?: string | number;
+  uid?: string | null;
   [key: string]: unknown;
 };
+export type Ban = { ban_id: string; uid: string; duration: string };
+export type BansResponse = { bans: Ban[]; raw?: string; page: number };
 export type AppSettings = {
   nightly_check_enabled: boolean;
   nightly_check_hour: number;

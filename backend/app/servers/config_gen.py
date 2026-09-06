@@ -80,6 +80,7 @@ def build_config(server, mods: list[ModEntry]) -> dict:
             "name": server.game_name or server.name,
             "password": server.game_password or "",
             "passwordAdmin": server.admin_password or "",
+            "admins": list(server.game_admins or []),
             "scenarioId": server.scenario_game_id or "",
             "maxPlayers": server.max_players,
             "visible": bool(server.visible),

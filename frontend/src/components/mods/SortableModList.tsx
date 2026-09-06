@@ -34,6 +34,16 @@ type SortableModListProps<T extends SortableRow> = {
   renderMeta?: (item: T) => ReactNode;
   /** Per-row slot rendered on the trailing edge (toggle, pin, remove, ...). */
   renderActions?: (item: T) => ReactNode;
+  /**
+   * Replaces only the inner text of the name node — the `truncate font-display`
+   * wrapper element is kept. Absent → the plain `name ?? guid` text.
+   */
+  renderName?: (item: T) => ReactNode;
+  /**
+   * Full-width block rendered inside the `<li>`, after the flex row. Absent →
+   * nothing (render byte-identical to before this prop existed).
+   */
+  renderExpanded?: (item: T) => ReactNode;
   /** Disable all drag interaction (kept mounted so slots still render). */
   disabled?: boolean;
 };
@@ -43,6 +53,8 @@ export function SortableModList<T extends SortableRow>({
   onReorder,
   renderMeta,
   renderActions,
+  renderName,
+  renderExpanded,
   disabled = false,
 }: SortableModListProps<T>) {
   const sensors = useSensors(
@@ -71,6 +83,8 @@ export function SortableModList<T extends SortableRow>({
               disabled={disabled}
               renderMeta={renderMeta}
               renderActions={renderActions}
+              renderName={renderName}
+              renderExpanded={renderExpanded}
             />
           ))}
         </ul>
@@ -85,12 +99,16 @@ function SortableModRow<T extends SortableRow>({
   disabled,
   renderMeta,
   renderActions,
+  renderName,
+  renderExpanded,
 }: {
   item: T;
   index: number;
   disabled: boolean;
   renderMeta?: (item: T) => ReactNode;
   renderActions?: (item: T) => ReactNode;
+  renderName?: (item: T) => ReactNode;
+  renderExpanded?: (item: T) => ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.key,
@@ -128,13 +146,16 @@ function SortableModRow<T extends SortableRow>({
       </span>
       <span className="min-w-0 flex-1 space-y-1">
         <span className="block truncate font-display text-sm uppercase tracking-wide text-stone-100">
-          {item.name ?? item.guid}
+          {renderName ? renderName(item) : item.name ?? item.guid}
         </span>
         <span className="block truncate font-mono text-[10px] text-stone-500">{item.guid}</span>
         {renderMeta?.(item)}
       </span>
       {renderActions && (
         <span className="flex shrink-0 flex-wrap items-center gap-2">{renderActions(item)}</span>
+      )}
+      {renderExpanded && (
+        <div className="w-full empty:hidden">{renderExpanded(item)}</div>
       )}
     </li>
   );
