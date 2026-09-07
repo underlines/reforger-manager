@@ -63,6 +63,11 @@ class ModOut(BaseModel):
     # Library mods that declare this mod as a dependency. Non-empty => deleting
     # this mod / its files is refused while those mods are assigned or packed.
     required_by: list[ModRefOut] = []
+    # Populated only when ``GET /api/mods?refs=1`` is requested.
+    cache_bytes: int | None = None
+    is_orphan: bool = False
+    is_unreferenced: bool = False
+    kept_by: list[str] | None = None
 
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -110,6 +115,12 @@ class ModVerifyIn(BaseModel):
 
 class ModDownloadIn(BaseModel):
     version: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class ModReferencesOut(BaseModel):
+    servers: list[str]
+    modpacks: list[str]
+    required_by: list[ModRefOut]
 
 
 class ModSearchResult(BaseModel):

@@ -103,8 +103,14 @@ export type DetailServer = Server & {
 export type ConfigResponse = { server_id: number; config: Record<string, unknown>; path: string };
 export type Preflight = {
   verdict: "green" | "warn" | "blocked";
-  checks: Array<{ name: string; level: string; detail: string; fix?: string }>;
-  resolved_mods: unknown[];
+  checks: Array<{
+    name: string;
+    level: string;
+    detail: string;
+    fix?: string;
+    guid?: string | null;
+  }>;
+  resolved_mods: Array<{ guid: string; name: string | null; state?: string; version?: string | null }>;
 };
 export type LogLine = { text: string; severity: string | null; is_spam: boolean; line_number?: number };
 export type LogResponse = { lines: LogLine[]; truncated?: boolean; scanned_bytes?: number };

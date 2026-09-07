@@ -9,7 +9,6 @@ import { ModsPage } from "./pages/Mods";
 import { ServerDetailPage } from "./pages/ServerDetail";
 import { ServersPage } from "./pages/Servers";
 import { SettingsPage } from "./pages/Settings";
-import { StoragePage } from "./pages/Storage";
 import { useSession } from "./providers";
 
 export function App() {
@@ -26,7 +25,6 @@ export function App() {
         <Route path="/mods" element={<ModsPage />} />
         <Route path="/mods/:guid" element={<ModDetailPage />} />
         <Route path="/modpacks" element={<ModpacksPage />} />
-        <Route path="/storage" element={<StoragePage />} />
         <Route path="/jobs" element={<JobsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>

@@ -336,7 +336,17 @@ export function ModDetailPage() {
                       className="flex flex-wrap items-center gap-2 py-2"
                       style={{ paddingLeft: `${Math.min(node.depth, 8) * 1.25}rem` }}
                     >
-                      <span className="min-w-0 truncate font-mono text-stone-300">{node.name ?? node.guid}</span>
+                      {node.state !== "unresolved" && node.depth > 0 ? (
+                        <Link
+                          to={`/mods/${node.guid}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="min-w-0 truncate font-mono text-stone-300 hover:text-amber-400"
+                        >
+                          {node.name ?? node.guid}
+                        </Link>
+                      ) : (
+                        <span className="min-w-0 truncate font-mono text-stone-300">{node.name ?? node.guid}</span>
+                      )}
                       <Badge tone={viaTone(node.via)}>via {node.via}</Badge>
                       <Badge tone={stateTone(node.state)}>{node.state}</Badge>
                     </li>

@@ -9,7 +9,6 @@ const navigation = [
   { to: "/servers", label: "Servers" },
   { to: "/mods", label: "Mod Library" },
   { to: "/modpacks", label: "Modpacks" },
-  { to: "/storage", label: "Storage" },
   { to: "/jobs", label: "Jobs" },
   { to: "/settings", label: "Settings" },
 ];

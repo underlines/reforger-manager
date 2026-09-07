@@ -30,11 +30,14 @@ class PreflightCheck:
     level: str  # green | warn | blocked
     detail: str
     fix: str | None = None
+    guid: str | None = None
 
     def as_dict(self) -> dict:
         value = asdict(self)
         if value["fix"] is None:
             value.pop("fix")
+        if value["guid"] is None:
+            value.pop("guid")
         return value
 
 
@@ -124,11 +127,13 @@ async def preflight(session: AsyncSession, server_id: int) -> PreflightReport:
             checks.append(PreflightCheck(
                 f"Workshop {guid}", "blocked", _availability_detail(guid, server_id),
                 "Remove or replace this addon and its unavailable dependencies.",
+                guid=guid,
             ))
             detail["availability"] = "not_resolvable"
         except WorkshopError as exc:
             checks.append(PreflightCheck(
                 f"Workshop {guid}", "warn", f"Could not verify Workshop availability for {guid}: {exc}.",
+                guid=guid,
             ))
             detail["availability"] = "unknown"
         else:
@@ -139,12 +144,14 @@ async def preflight(session: AsyncSession, server_id: int) -> PreflightReport:
                         f"Workshop {guid}", "blocked",
                         f"{guid} is marked {', '.join(flags)} on the Workshop.",
                         "Use a listed, public, non-obsolete replacement.",
+                        guid=guid,
                     ))
                     detail["availability"] = flags[0]
                 else:
                     checks.append(PreflightCheck(
                         f"Workshop {guid}", "warn",
                         f"{guid} is marked {', '.join(flags)} on the Workshop but is already present locally.",
+                        guid=guid,
                     ))
                     detail["availability"] = "local"
             else:
@@ -166,16 +173,19 @@ async def preflight(session: AsyncSession, server_id: int) -> PreflightReport:
                             f"Engine compatibility {guid}", "blocked",
                             f"{guid} version {detail['version']} declares game version {game_version}; installed engine is {engine.installed_version}.",
                             "Select a version built for the installed engine or replace the addon.",
+                            guid=guid,
                         ))
                     elif compat == "warn":
                         checks.append(PreflightCheck(
                             f"Engine compatibility {guid}", "warn",
                             f"{guid} version {detail['version']} declares game version {game_version}; installed engine is {engine.installed_version}. Older-version addons usually run on a newer engine, but verify against a live start.",
+                            guid=guid,
                         ))
             else:
                 checks.append(PreflightCheck(
                     f"Engine compatibility {guid}", "warn",
                     f"{guid} does not declare a game version for the selected release.",
+                    guid=guid,
                 ))
 
             size = _as_size(version.get("size"))
@@ -183,6 +193,7 @@ async def preflight(session: AsyncSession, server_id: int) -> PreflightReport:
             checks.append(PreflightCheck(
                 f"Engine compatibility {guid}", "warn",
                 f"Could not determine the selected release and its declared game version for {guid}.",
+                guid=guid,
             ))
             size = _as_size((api_mod or {}).get("size")) or (mod.size if mod else None)
 
@@ -196,6 +207,7 @@ async def preflight(session: AsyncSession, server_id: int) -> PreflightReport:
                 f"Stale pin {guid}", "warn",
                 f"{guid} is pinned to {pin.pinned_version} for engine build {pin.pinned_at_build}, not installed build {engine.installed_build if engine else None}.",
                 "Unpin and take latest.",
+                guid=guid,
             ))
         resolved_mods.append(detail)
 

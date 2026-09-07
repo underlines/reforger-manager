@@ -146,6 +146,34 @@ export function ModsPanel({
         ? "bad"
         : "warn";
 
+  // Pre-flight checks grouped by mod: the backend stamps per-mod checks with a
+  // `guid`, so those render under a linked mod heading (first-appearance order,
+  // resolved via `resolved_mods`); every other check lands in one trailing
+  // "Other checks" group. Built from the same report — no extra state.
+  const preflightGroups = useMemo(() => {
+    const data = preflight.data;
+    if (!data) return null;
+    const nameByGuid = new Map<string, string | null>(
+      data.resolved_mods.map((mod): [string, string | null] => [mod.guid, mod.name]),
+    );
+    const order: string[] = [];
+    const byGuid = new Map<string, Preflight["checks"]>();
+    const other: Preflight["checks"] = [];
+    for (const check of data.checks) {
+      if (check.guid) {
+        const group = byGuid.get(check.guid);
+        if (group) group.push(check);
+        else {
+          byGuid.set(check.guid, [check]);
+          order.push(check.guid);
+        }
+      } else {
+        other.push(check);
+      }
+    }
+    return { nameByGuid, order, byGuid, other };
+  }, [preflight.data]);
+
   /* --------------------------- working copy --------------------------- */
 
   const serverModsSig = useMemo(
@@ -440,6 +468,15 @@ export function ModsPanel({
       .slice(0, 60);
   }, [library.data, workingGuids, modSearch]);
 
+  // Library picker pagination: 10 rows per page, back to page 1 whenever the
+  // filter or the non-local toggle changes. pageIndex clamps so a shrinking
+  // candidate list (e.g. after adding the last row on a page) can't leave an
+  // empty slice on screen.
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [modSearch, showNonLocal]);
+  const pageCount = Math.max(1, Math.ceil(candidates.length / 10));
+  const pageIndex = Math.min(page, pageCount - 1);
+
   /* ----------------------- save mod set as a pack ----------------------- */
 
   const [packOpen, setPackOpen] = useState(false);
@@ -596,32 +633,70 @@ export function ModsPanel({
         ) : preflight.isError ? (
           <p className="error">Pre-flight could not be loaded.</p>
         ) : (
-          preflight.data && (
+          preflight.data &&
+          preflightGroups && (
             <>
               <Badge tone={tone}>{preflight.data.verdict}</Badge>
               <div className="list mt-2">
-                {preflight.data.checks.map((check, index) => (
-                  <div className="row" key={`${check.name}-${index}`}>
-                    <span className="row-main">
-                      <strong>{check.name}</strong>
-                      <small>
-                        {check.detail}
-                        {check.fix ? ` Fix: ${check.fix}` : ""}
-                      </small>
-                    </span>
-                    <Badge
-                      tone={
-                        check.level === "blocked" || check.level === "error"
-                          ? "bad"
-                          : check.level === "warn" || check.level === "warning"
-                            ? "warn"
-                            : "good"
-                      }
-                    >
-                      {check.level}
-                    </Badge>
+                {preflightGroups.order.map((guid) => (
+                  <div key={guid} className="py-2">
+                    <Link to={`/mods/${guid}`} className="hover:text-amber-400">
+                      {preflightGroups.nameByGuid.get(guid) ?? guid}
+                    </Link>
+                    <div className="list mt-1">
+                      {(preflightGroups.byGuid.get(guid) ?? []).map((check, index) => (
+                        <div className="row" key={`${check.name}-${index}`}>
+                          <span className="row-main">
+                            <small>
+                              {check.detail}
+                              {check.fix ? ` Fix: ${check.fix}` : ""}
+                            </small>
+                          </span>
+                          <Badge
+                            tone={
+                              check.level === "blocked" || check.level === "error"
+                                ? "bad"
+                                : check.level === "warn" || check.level === "warning"
+                                  ? "warn"
+                                  : "good"
+                            }
+                          >
+                            {check.level}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
+                {preflightGroups.other.length > 0 && (
+                  <div className="py-2">
+                    <strong>Other checks</strong>
+                    <div className="list mt-1">
+                      {preflightGroups.other.map((check, index) => (
+                        <div className="row" key={`${check.name}-${index}`}>
+                          <span className="row-main">
+                            <strong>{check.name}</strong>
+                            <small>
+                              {check.detail}
+                              {check.fix ? ` Fix: ${check.fix}` : ""}
+                            </small>
+                          </span>
+                          <Badge
+                            tone={
+                              check.level === "blocked" || check.level === "error"
+                                ? "bad"
+                                : check.level === "warn" || check.level === "warning"
+                                  ? "warn"
+                                  : "good"
+                            }
+                          >
+                            {check.level}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           )
@@ -784,16 +859,40 @@ export function ModsPanel({
         ) : library.isError ? (
           <p className="error">{errText(library.error, "Library could not be loaded.")}</p>
         ) : candidates.length ? (
-          <ul className="divide-y divide-stone-800 border border-stone-800">
-            {candidates.map((mod) => (
-              <AddModRow
-                key={mod.guid}
-                mod={mod}
-                existingGuids={workingGuids}
-                onAdd={() => void addMod(mod)}
-              />
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y divide-stone-800 border border-stone-800">
+              {candidates.slice(pageIndex * 10, pageIndex * 10 + 10).map((mod) => (
+                <AddModRow
+                  key={mod.guid}
+                  mod={mod}
+                  existingGuids={workingGuids}
+                  onAdd={() => void addMod(mod)}
+                />
+              ))}
+            </ul>
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pageIndex === 0}
+                onClick={() => setPage(pageIndex - 1)}
+              >
+                Prev
+              </Button>
+              <span className="text-xs text-stone-400">
+                {pageIndex * 10 + 1}-{Math.min((pageIndex + 1) * 10, candidates.length)} of{" "}
+                {candidates.length}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pageIndex + 1 >= pageCount}
+                onClick={() => setPage(pageIndex + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </>
         ) : (
           <Empty label="No library mods match — every candidate is already assigned or filtered out." />
         )}

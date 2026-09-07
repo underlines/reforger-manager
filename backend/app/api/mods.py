@@ -52,12 +52,13 @@ from ..schemas.mod import (
     ModOut,
     ModPinIn,
     ModRefOut,
+    ModReferencesOut,
     ModSearchResult,
     ResolvedTreeOut,
     ModVerifyIn,
 )
 from ..servers.supervisor import supervisor
-from .storage import orphan_reference_sets
+from .storage import _bytes_for, orphan_reference_sets
 
 router = APIRouter(prefix="/mods", tags=["mods"], dependencies=[Depends(get_current_user)])
 
@@ -114,11 +115,11 @@ async def _reverse_dependents(session: AsyncSession) -> dict[str, list[ModRefOut
     return out
 
 
-async def _delete_block_detail(
-    session: AsyncSession, guid: str, closure_owners: dict[str, set[str]]
-) -> str:
-    """A specific 'why this delete is refused' message: the servers, modpacks,
-    and parent mods that keep ``guid`` alive."""
+async def _mod_references(
+    session: AsyncSession, guid: str
+) -> tuple[list[str], list[str], list[ModRefOut]]:
+    """The direct references to ``guid``: server-definition names, modpack names,
+    and the library mods that declare it as a dependency (``required_by``)."""
     servers = (
         await session.execute(
             select(Server.name)
@@ -135,6 +136,26 @@ async def _delete_block_detail(
             .order_by(Modpack.name)
         )
     ).scalars().all()
+    required_by = [
+        ModRefOut(guid=owner_guid, name=owner_name)
+        for owner_guid, owner_name in (
+            await session.execute(
+                select(Mod.guid, Mod.name)
+                .join(ModDependency, ModDependency.mod_guid == Mod.guid)
+                .where(ModDependency.depends_on_guid == guid)
+                .order_by(Mod.name.is_(None), Mod.name, Mod.guid)
+            )
+        ).all()
+    ]
+    return list(servers), list(packs), required_by
+
+
+async def _delete_block_detail(
+    session: AsyncSession, guid: str, closure_owners: dict[str, set[str]]
+) -> str:
+    """A specific 'why this delete is refused' message: the servers, modpacks,
+    and parent mods that keep ``guid`` alive."""
+    servers, packs, _required_by = await _mod_references(session, guid)
     parents = sorted(owner for owner in closure_owners.get(guid, set()) if owner != guid)
     parent_labels: list[str] = []
     if parents:
@@ -165,6 +186,7 @@ async def list_mods(
     q: str | None = Query(default=None),
     update: bool | None = Query(default=None),
     state: str | None = Query(default=None),
+    refs: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ) -> list[ModOut]:
     stmt = select(Mod).order_by(Mod.name.is_(None), Mod.name, Mod.guid)
@@ -184,7 +206,27 @@ async def list_mods(
     rows = (await session.execute(stmt)).scalars().all()
     engine_build = await _engine_build(session)
     dependents = await _reverse_dependents(session)
-    return [_to_out(m, engine_build, dependents.get(m.guid, [])) for m in rows]
+    out = [_to_out(m, engine_build, dependents.get(m.guid, [])) for m in rows]
+
+    if refs:
+        directly_referenced, closure_owners = await orphan_reference_sets(session)
+        closure = set(closure_owners)
+        name_map = {m.guid: m.name for m in rows}
+        for m, item in zip(rows, out):
+            item.cache_bytes = _bytes_for(m.guid) if m.is_local else None
+            unref = m.guid not in directly_referenced and m.guid not in closure
+            item.is_orphan = m.is_local and unref
+            item.is_unreferenced = (not m.is_local) and unref
+            if m.is_local and m.guid not in directly_referenced and m.guid in closure:
+                item.kept_by = [
+                    name_map.get(owner, owner)
+                    for owner in sorted(closure_owners.get(m.guid, set()))
+                    if owner != m.guid
+                ]
+            else:
+                item.kept_by = None
+
+    return out
 
 
 # ------------------------------------------------------------------ search
@@ -366,6 +408,15 @@ async def delete_library_mod(
 
     await session.delete(mod)
     await session.commit()
+
+
+@router.get("/{guid}/references", response_model=ModReferencesOut)
+async def get_mod_references(guid: str, session=Depends(get_session)):
+    guid = guid.upper()
+    if await session.get(Mod, guid) is None:
+        raise HTTPException(404, "mod not found")
+    servers, packs, required_by = await _mod_references(session, guid)
+    return ModReferencesOut(servers=servers, modpacks=packs, required_by=required_by)
 
 
 @router.get("/{guid}", response_model=ModDetailOut)

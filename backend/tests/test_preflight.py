@@ -158,6 +158,41 @@ async def test_per_server_stale_pin_overrides_library_pin(session, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_per_mod_checks_carry_the_mod_guid(session, monkeypatch):
+    session.add_all([
+        Engine(id=1, installed_build="new", installed_version="1.8.0.10"),
+        Server(id=4, name="guid"),
+        ServerMod(server_id=4, mod_guid=GUID_A, pinned_version="0.9", pinned_at_build="old"),
+    ])
+    await session.commit()
+    fake = FakeWorkshop(missing={GUID_A})
+    monkeypatch.setattr(preflight_module, "resolve_dependencies", _tree)
+    monkeypatch.setattr(preflight_module, "workshop", fake)
+
+    report = await preflight_module.preflight(session, 4)
+    stale = next(check for check in report.checks if check.name == f"Stale pin {GUID_A}")
+    workshop = next(check for check in report.checks if check.name == f"Workshop {GUID_A}")
+    assert workshop.as_dict()["guid"] == GUID_A
+    assert stale.as_dict()["guid"] == GUID_A
+
+
+@pytest.mark.asyncio
+async def test_checks_without_a_mod_omit_guid_key(session, monkeypatch):
+    session.add_all([
+        Engine(id=1, installed_build="24501482", installed_version="1.8.0.10"),
+        Server(id=5, name="no-guid"),
+        ServerMod(server_id=5, mod_guid=GUID_A),
+    ])
+    await session.commit()
+    monkeypatch.setattr(preflight_module, "resolve_dependencies", _tree)
+    monkeypatch.setattr(preflight_module, "workshop", FakeWorkshop())
+
+    report = await preflight_module.preflight(session, 5)
+    space = next(check for check in report.checks if check.name == "Download space")
+    assert "guid" not in space.as_dict()
+
+
+@pytest.mark.asyncio
 async def test_404_gproj_and_profile_log_fallback(session, monkeypatch, tmp_path):
     """The API fallback keeps gproj edges, then a server-9 log supplies the rest."""
     session.add_all([
