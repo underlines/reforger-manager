@@ -126,6 +126,12 @@ export function SavesPanel({
   const [armBusy, setArmBusy] = useState(false);
   const [armErr, setArmErr] = useState<string | null>(null);
 
+  // start-fresh-playthrough dialog (only shown while running — direct arm otherwise)
+  const [freshDialogOpen, setFreshDialogOpen] = useState(false);
+  const [freshSticky, setFreshSticky] = useState(false);
+  const [freshBusy, setFreshBusy] = useState(false);
+  const [freshErr, setFreshErr] = useState<string | null>(null);
+
   // snapshot-from-save-point dialog
   const [snapshotDialogSave, setSnapshotDialogSave] = useState<SavePointOut | null>(null);
   const [snapshotLabel, setSnapshotLabel] = useState("");
@@ -216,6 +222,64 @@ export function SavesPanel({
     }
     setArmDialogSave(null);
     setArmBusy(false);
+    await run("restart-load", async () => {
+      await api(`/api/servers/${id}/stop`, { method: "POST" });
+      await api(`/api/servers/${id}/start`, { method: "POST" });
+    });
+    invalidate();
+  };
+
+  const armFreshDirect = async () => {
+    setActionError(null);
+    try {
+      await api<SelectionOut>(`/api/servers/${id}/saves/arm-fresh`, {
+        method: "POST",
+        body: JSON.stringify({ sticky: false }),
+      });
+      invalidate();
+    } catch (e) {
+      setActionError(errText(e, "Could not arm a fresh playthrough"));
+    }
+  };
+
+  const openFreshDialog = () => {
+    setFreshSticky(false);
+    setFreshErr(null);
+    setFreshDialogOpen(true);
+  };
+
+  const armFreshForNextRestart = async () => {
+    setFreshBusy(true);
+    setFreshErr(null);
+    try {
+      await api<SelectionOut>(`/api/servers/${id}/saves/arm-fresh`, {
+        method: "POST",
+        body: JSON.stringify({ sticky: freshSticky }),
+      });
+      setFreshDialogOpen(false);
+      invalidate();
+    } catch (e) {
+      setFreshErr(errText(e, "Could not arm a fresh playthrough"));
+    } finally {
+      setFreshBusy(false);
+    }
+  };
+
+  const restartNowFresh = async () => {
+    setFreshBusy(true);
+    setFreshErr(null);
+    try {
+      await api<SelectionOut>(`/api/servers/${id}/saves/arm-fresh`, {
+        method: "POST",
+        body: JSON.stringify({ sticky: freshSticky }),
+      });
+    } catch (e) {
+      setFreshErr(errText(e, "Could not arm a fresh playthrough"));
+      setFreshBusy(false);
+      return;
+    }
+    setFreshDialogOpen(false);
+    setFreshBusy(false);
     await run("restart-load", async () => {
       await api(`/api/servers/${id}/stop`, { method: "POST" });
       await api(`/api/servers/${id}/start`, { method: "POST" });
@@ -419,9 +483,22 @@ export function SavesPanel({
       {actionError && <p className="error">{actionError}</p>}
 
       <section className="grid gap-3">
-        <h3 className="font-display text-sm font-bold uppercase tracking-widest text-stone-300">
-          Save points
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-display text-sm font-bold uppercase tracking-widest text-stone-300">
+            Save points
+          </h3>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => (running ? openFreshDialog() : void armFreshDirect())}
+          >
+            Start fresh playthrough
+          </Button>
+        </div>
+        <p className="-mt-1 text-xs text-stone-500">
+          Starts a brand-new playthrough on next start. Existing playthroughs and their save points
+          are kept, not deleted.
+        </p>
         {!hasAnySavePoints ? (
           <Empty label="This server hasn't written a save yet. Save points appear after the first autosave (every 10 minutes) or a clean stop." />
         ) : (
@@ -724,6 +801,55 @@ export function SavesPanel({
               onClick={() => void restartNowAndLoad()}
             >
               {armBusy || action === "restart-load" ? "Working..." : "Restart now and load"}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+
+      {/* Start-fresh-playthrough dialog — only opened while the server is running */}
+      <Dialog
+        open={freshDialogOpen}
+        title="Start a fresh playthrough"
+        onClose={() => !freshBusy && setFreshDialogOpen(false)}
+      >
+        <div className="grid gap-3">
+          <p className="text-xs text-stone-300">
+            The server is running. Arm a fresh playthrough for the next restart, or restart now to
+            start it immediately. Existing playthroughs and their save points are kept.
+          </p>
+          <label className="flex items-center gap-2 text-xs text-stone-300">
+            <input
+              type="checkbox"
+              checked={freshSticky}
+              onChange={(e) => setFreshSticky(e.target.checked)}
+            />
+            Keep starting fresh on every future restart (sticky)
+          </label>
+          {freshErr && <p className="error">{freshErr}</p>}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={freshBusy}
+              onClick={() => setFreshDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={freshBusy}
+              onClick={() => void armFreshForNextRestart()}
+            >
+              Arm for next restart
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              disabled={freshBusy || Boolean(action)}
+              onClick={() => void restartNowFresh()}
+            >
+              {freshBusy || action === "restart-load" ? "Working..." : "Restart now"}
             </Button>
           </div>
         </div>
