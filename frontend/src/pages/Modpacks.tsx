@@ -1,22 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { Empty } from "../components/Empty";
 import { PageHeading } from "../components/PageHeading";
 import { SortableModList } from "../components/mods/SortableModList";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
 import { api, ApiError, apiVoid, type Mod, type Modpack, type Server } from "../lib/api";
+import { useModCoverage, type ModDeps } from "../lib/modCoverage";
 
 /* ------------------------------------------------------------------ *
  * A modpack item is only a GUID + a load order. `SortableModList` is
  * the generic drag list from S5 — it needs `{ key, guid, name }` and
  * nothing more, so `EditorItem` satisfies it directly (no `enabled`,
- * no pins). We pass `items` / `onReorder` and a small `renderActions`
- * for the per-row remove button; no new prop on the component.
+ * no pins). We pass `items` / `onReorder` for the top level only, a
+ * small `renderActions` (disclosure + remove) and a `renderExpanded`
+ * dependency subtree; no new prop on the component.
  * ------------------------------------------------------------------ */
 type EditorItem = { key: string; guid: string; name: string | null; mod_guid: string };
 
-type DepNode = { guid: string; name: string | null; via: string; state: string; depth: number };
-type ModDeps = { dependency_tree: { nodes: DepNode[] } | null };
+/** Stable empty set for rows that cover nothing (avoids a new Set() each render). */
+const EMPTY_GUIDS: ReadonlySet<string> = new Set<string>();
 
 type ExportShape = {
   name: string;
@@ -135,39 +138,58 @@ export function ModpacksPage() {
     mod_guid: guid,
   });
 
-  // Add a mod plus any dependencies not already in the pack (dependencies first).
-  const addItem = async (mod: Mod) => {
-    let nodes: DepNode[] = [];
-    try {
-      const detail = await queryClient.fetchQuery({
-        queryKey: ["mod", mod.guid, "deps"],
-        queryFn: () => api<ModDeps>(`/api/mods/${mod.guid}`),
-        staleTime: 60_000,
-      });
-      nodes = detail.dependency_tree?.nodes ?? [];
-    } catch {
-      // Dependency lookup failed — still add the mod itself.
-    }
+  // Add only the explicit pick, synchronously — dependencies render as derived
+  // coverage under each parent's disclosure below. Nothing the user did not
+  // pick is stored.
+  const addItem = (mod: Mod) => {
     setItems((current) => {
       const present = new Set(current.map((item) => item.mod_guid));
-      const additions: EditorItem[] = [];
-      for (const node of [...nodes].sort((a, b) => b.depth - a.depth)) {
-        if (
-          node.guid === mod.guid ||
-          node.state === "unresolved" ||
-          present.has(node.guid) ||
-          additions.some((item) => item.mod_guid === node.guid)
-        ) {
-          continue;
-        }
-        additions.push(makeItem(node.guid, node.name));
-      }
-      if (!present.has(mod.guid)) additions.push(makeItem(mod.guid, mod.name));
-      return additions.length ? [...current, ...additions] : current;
+      return present.has(mod.guid)
+        ? current
+        : [...current, makeItem(mod.guid, mod.name)];
     });
   };
   const removeItem = (guid: string) =>
     setItems((current) => current.filter((item) => item.mod_guid !== guid));
+
+  /* -------------------- dependency-aware dedup (view only) -------------------- *
+   * A pack stores only explicit picks. When one pick already pulls another in
+   * through its dependency closure, the covered pick is hoisted out of the
+   * top-level list and shown under its covering parent(s). Nothing is deleted —
+   * a covered row keeps its slot in `items`; it returns to the top level once
+   * no covering parent remains.
+   * ------------------------------------------------------------------------- */
+
+  const { coverageByParent, covered } = useModCoverage(items);
+
+  // Only uncovered picks reach the sortable list; drag / save still act on the
+  // full `items` array (see `reorderVisible`).
+  const topLevel = useMemo(
+    () => items.filter((item) => !covered.has(item.mod_guid)),
+    [items, covered],
+  );
+
+  // A drag reorders `topLevel`; splice that order back into `items`, leaving
+  // covered rows pinned to the slots they already hold — `save` maps index →
+  // load_order, so this keeps a covered pick stored next to its parent.
+  const reorderVisible = (nextVisible: EditorItem[]) => {
+    setItems((current) => {
+      const queue = [...nextVisible];
+      return current.map((row) =>
+        covered.has(row.mod_guid) ? row : queue.shift() ?? row,
+      );
+    });
+  };
+
+  // Per-row "show dependencies" disclosure for the top-level list.
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (guid: string) =>
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(guid)) next.delete(guid);
+      else next.add(guid);
+      return next;
+    });
 
   const save = useMutation({
     mutationFn: () => {
@@ -367,18 +389,43 @@ export function ModpacksPage() {
                 <p className="metric-label">Pack contents ({items.length})</p>
                 {items.length ? (
                   <SortableModList
-                    items={items}
-                    onReorder={setItems}
-                    renderActions={(item) => (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        type="button"
-                        onClick={() => removeItem(item.mod_guid)}
-                      >
-                        Remove
-                      </Button>
-                    )}
+                    items={topLevel}
+                    onReorder={reorderVisible}
+                    renderActions={(item) => {
+                      const open = expandedRows.has(item.mod_guid);
+                      return (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            type="button"
+                            aria-expanded={open}
+                            aria-label={open ? "Hide dependencies" : "Show dependencies"}
+                            onClick={() => toggleExpanded(item.mod_guid)}
+                          >
+                            {open ? "▾" : "▸"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            type="button"
+                            onClick={() => removeItem(item.mod_guid)}
+                          >
+                            Remove
+                          </Button>
+                        </>
+                      );
+                    }}
+                    renderExpanded={(item) =>
+                      expandedRows.has(item.mod_guid) ? (
+                        <PackItemExpanded
+                          parent={item}
+                          items={items}
+                          coverageGuids={coverageByParent.get(item.mod_guid) ?? EMPTY_GUIDS}
+                          onRemove={removeItem}
+                        />
+                      ) : null
+                    }
                   />
                 ) : (
                   <Empty label="No mods in this pack yet — add some from the library below." />
@@ -423,7 +470,7 @@ export function ModpacksPage() {
                             {!mod.is_local && <span className="text-amber-400">not local</span>}
                           </span>
                         </span>
-                        <Button size="sm" type="button" onClick={() => void addItem(mod)}>
+                        <Button size="sm" type="button" onClick={() => addItem(mod)}>
                           Add
                         </Button>
                       </li>
@@ -681,5 +728,97 @@ export function ModpacksPage() {
         </div>
       </Dialog>
     </>
+  );
+}
+
+/* Expanded subtree under one pack pick: the OTHER explicit picks its dependency
+ * closure covers (rendered with a Remove — the row is stored in the pack) plus
+ * its pure dependency nodes (read-only links). Modeled on the Mods tab's
+ * AssignedModExpanded, minus enable/pin controls — packs have neither. The deps
+ * query shares the ["mod", guid, "deps"] cache with useModCoverage. */
+function PackItemExpanded({
+  parent,
+  items,
+  coverageGuids,
+  onRemove,
+}: {
+  parent: EditorItem;
+  items: EditorItem[];
+  coverageGuids: ReadonlySet<string>;
+  onRemove: (mod_guid: string) => void;
+}) {
+  const deps = useQuery({
+    queryKey: ["mod", parent.mod_guid, "deps"],
+    queryFn: () => api<ModDeps>(`/api/mods/${parent.mod_guid}`),
+    staleTime: 60_000,
+  });
+
+  // Pure dependency nodes: depth > 0 and NOT themselves a pack pick (those
+  // render above as pick-styled rows instead). Sorted by depth then name.
+  const packGuids = new Set(items.map((item) => item.mod_guid));
+  const pureNodes = [...(deps.data?.dependency_tree?.nodes ?? [])]
+    .filter((node) => node.depth > 0 && !packGuids.has(node.guid))
+    .sort(
+      (a, b) =>
+        a.depth - b.depth || (a.name ?? a.guid).localeCompare(b.name ?? b.guid),
+    );
+  const picks = items.filter((row) => coverageGuids.has(row.mod_guid));
+
+  return (
+    <div className="mt-2 w-full space-y-1.5 border-l-2 border-stone-800 pl-3 text-[11px] text-stone-400">
+      {picks.map((row) => (
+        <div key={row.mod_guid} className="flex flex-wrap items-center gap-2">
+          <Link
+            to={`/mods/${row.mod_guid}`}
+            className="font-display uppercase tracking-wide text-stone-200 hover:text-amber-400"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {row.name ?? row.mod_guid}
+          </Link>
+          <Badge tone="neutral">pick</Badge>
+          <Button
+            size="sm"
+            variant="ghost"
+            type="button"
+            onClick={() => onRemove(row.mod_guid)}
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+
+      {deps.isLoading ? (
+        <p>...</p>
+      ) : deps.isError ? (
+        <p className="error">Dependency lookup failed.</p>
+      ) : pureNodes.length ? (
+        pureNodes.map((node) => (
+          <div
+            key={`${node.guid}-${node.depth}`}
+            className="flex flex-wrap items-center gap-2"
+          >
+            {node.state === "unresolved" ? (
+              <>
+                <span className="font-mono text-stone-500">{node.guid}</span>
+                <Badge tone="warn">unresolved</Badge>
+              </>
+            ) : (
+              <>
+                <Link
+                  to={`/mods/${node.guid}`}
+                  className="text-stone-300 hover:text-amber-400"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {node.name ?? node.guid}
+                </Link>
+                <span className="text-stone-500">via {node.via}</span>
+              </>
+            )}
+          </div>
+        ))
+      ) : picks.length ? null : (
+        <p>No dependencies.</p>
+      )}
+    </div>
   );
 }

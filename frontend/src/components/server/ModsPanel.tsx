@@ -1,4 +1,4 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Empty } from "../Empty";
@@ -14,6 +14,7 @@ import {
   type Server,
   type ServerMod,
 } from "../../lib/api";
+import { useModCoverage, type ModDeps } from "../../lib/modCoverage";
 
 /* ------------------------------------------------------------------ *
  * Local working copy of a server's mod set. Every edit on this tab
@@ -30,9 +31,6 @@ type WorkingMod = SortableRow & {
   pinned_reason: string | null;
   pinned_at: string | null;
 };
-
-type DepNode = { guid: string; name: string | null; via: string; state: string; depth: number };
-type ModDeps = { dependency_tree: { nodes: DepNode[] } | null };
 
 /** Stable empty set for rows that cover nothing (avoids a new Set() each render). */
 const EMPTY_GUIDS: ReadonlySet<string> = new Set<string>();
@@ -263,75 +261,7 @@ export function ModsPanel({
    * once no covering parent remains.
    * ------------------------------------------------------------------------- */
 
-  // One deps query per explicit pick, keyed exactly like AddModRow /
-  // AssignedModExpanded so the three share a single cache entry.
-  const depResults = useQueries({
-    queries: working.map((mod) => ({
-      queryKey: ["mod", mod.mod_guid, "deps"],
-      queryFn: () => api<ModDeps>(`/api/mods/${mod.mod_guid}`),
-      staleTime: 60_000,
-    })),
-  });
-
-  // Signature that changes only when a deps query gains/loses data — keeps the
-  // memo below from recomputing on every unrelated render.
-  const depSig = depResults
-    .map((result) => (result.data ? String(result.dataUpdatedAt) : result.status))
-    .join("|");
-
-  // guid -> set of directly-declared, resolved dependency guids (undefined while
-  // that query is still loading → "covers nothing" for now).
-  const depEdges = useMemo(() => {
-    const map = new Map<string, Set<string> | undefined>();
-    working.forEach((mod, index) => {
-      const data = depResults[index]?.data;
-      if (!data) {
-        map.set(mod.mod_guid, undefined);
-        return;
-      }
-      const nodes = data.dependency_tree?.nodes ?? [];
-      map.set(
-        mod.mod_guid,
-        new Set(
-          nodes
-            .filter((node) => node.depth > 0 && node.state !== "unresolved")
-            .map((node) => node.guid),
-        ),
-      );
-    });
-    return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [working, depSig]);
-
-  // parent guid -> every OTHER explicit pick reachable through its closure.
-  // Walked with a visited set so A→B→A metadata can't loop.
-  const coverageByParent = useMemo(() => {
-    const explicit = new Set(working.map((mod) => mod.mod_guid));
-    const map = new Map<string, Set<string>>();
-    for (const parent of working) {
-      const reached = new Set<string>();
-      const seen = new Set<string>([parent.mod_guid]);
-      const stack = [...(depEdges.get(parent.mod_guid) ?? [])];
-      while (stack.length) {
-        const guid = stack.pop() as string;
-        if (seen.has(guid)) continue;
-        seen.add(guid);
-        if (explicit.has(guid)) reached.add(guid);
-        const next = depEdges.get(guid);
-        if (next) for (const g of next) if (!seen.has(g)) stack.push(g);
-      }
-      reached.delete(parent.mod_guid);
-      map.set(parent.mod_guid, reached);
-    }
-    return map;
-  }, [working, depEdges]);
-
-  const covered = useMemo(() => {
-    const set = new Set<string>();
-    for (const reached of coverageByParent.values())
-      for (const guid of reached) set.add(guid);
-    return set;
-  }, [coverageByParent]);
+  const { coverageByParent, covered } = useModCoverage(working);
 
   // Only uncovered rows reach the sortable list; DnD / save still act on the
   // full `working` array (see `reorderVisible`).
