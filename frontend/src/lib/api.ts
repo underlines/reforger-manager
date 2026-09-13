@@ -99,6 +99,12 @@ export type DetailServer = Server & {
   rcon_password: string | null;
   game_properties: Record<string, unknown> | null;
   extra_config: Record<string, unknown> | null;
+  persistence_enabled: boolean;
+  auto_save_interval: number;
+  save_retention: number;
+  load_session_save: boolean;
+  keep_session_save: boolean;
+  hive_id: number;
 };
 export type ConfigResponse = { server_id: number; config: Record<string, unknown>; path: string };
 export type Preflight = {
@@ -152,6 +158,76 @@ export type FileContent = {
   content: string | null;
 };
 
+export type ModDrift = { added: string[]; removed: string[] };
+export type SavePointOut = {
+  dir_name: string;
+  rel_path: string;
+  save_point_nr: number;
+  playthrough_nr: number;
+  readable: boolean;
+  uuid: string | null;
+  saved_at: string | null;
+  playtime_seconds: number | null;
+  game_version: string | null;
+  mission_resource: string | null;
+  display_name: string | null;
+  size_bytes: number;
+  matches_current_scenario: boolean;
+  engine_drift: boolean;
+  mod_drift: ModDrift | null;
+  mod_drift_unknown: boolean;
+};
+export type PlaythroughOut = {
+  dir_name: string;
+  playthrough_nr: number;
+  display_name: string | null;
+  started_at: string | null;
+  save_points: SavePointOut[];
+};
+export type ScenarioSaves = {
+  scenario_dir: string;
+  mission_resource: string | null;
+  matches_current_scenario: boolean;
+  playthroughs: PlaythroughOut[];
+};
+export type SnapshotModOut = { mod_id: string; name: string | null; version: string | null };
+export type SnapshotOut = {
+  snapshot_id: string;
+  label: string;
+  created_at: string;
+  source_save_uuid: string | null;
+  playthrough_nr: number | null;
+  save_point_nr: number | null;
+  mission_resource: string | null;
+  game_version: string | null;
+  saved_at_unix: number | null;
+  playtime_seconds: number | null;
+  uncompressed_size_bytes: number | null;
+  scenario_game_id: string | null;
+  mods: SnapshotModOut[];
+  scenario_dir: string | null;
+  playthrough_dir_name: string | null;
+  save_point_dir_name: string | null;
+  archive_size_bytes: number | null;
+};
+export type RestoreResult = {
+  snapshot_id: string;
+  restored_uuid: string | null;
+  target_rel_path: string;
+  armed: boolean;
+  auto_backup_snapshot_id: string | null;
+};
+export type SelectionOut = {
+  mode: "latest" | "pinned" | "fresh";
+  pinned_uuid: string | null;
+  sticky: boolean;
+};
+export type SavesListOut = {
+  scenarios: ScenarioSaves[];
+  snapshots: SnapshotOut[];
+  selection: SelectionOut;
+};
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -191,10 +267,19 @@ export async function apiVoid(path: string, init: RequestInit = {}): Promise<voi
   }
 }
 
-/** Multipart upload (bypasses {@link api}, which is JSON-only). Field name is `files`. */
-export async function apiUpload<T>(path: string, files: File[]): Promise<T> {
+/**
+ * Multipart upload (bypasses {@link api}, which is JSON-only). Files are
+ * appended under `opts.fieldName` (default `files`); `opts.fields` adds
+ * plain string form fields alongside them (e.g. a label or flag).
+ */
+export async function apiUpload<T>(
+  path: string,
+  files: File[],
+  opts: { fieldName?: string; fields?: Record<string, string> } = {},
+): Promise<T> {
   const formData = new FormData();
-  for (const file of files) formData.append("files", file);
+  for (const file of files) formData.append(opts.fieldName ?? "files", file);
+  for (const [key, value] of Object.entries(opts.fields ?? {})) formData.append(key, value);
   const response = await fetch(path, {
     method: "POST",
     headers: { Authorization: `Bearer ${getAccessToken()}` },

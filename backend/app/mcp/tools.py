@@ -44,6 +44,7 @@ from ..schemas.modpack import (
     ModpackFromServerIn,
     ModpackUpdate,
 )
+from ..schemas.saves import ArmIn, LabelIn, RestoreIn
 from ..schemas.server import (
     RconCommandIn,
     ScheduleRestartIn,
@@ -178,12 +179,13 @@ _PATH_PARAM_TYPES: dict[str, type] = {
     "server_id": int,
     "pack_id": int,
     "job_id": int,
+    "playthrough_nr": int,
 }
 
 
 # --------------------------------------------------------------------------
 # The tool table. Names/paths/descriptions derive from the router modules'
-# docstrings (PLAN fact #5): servers, jobs, engine, mods, modpacks,
+# docstrings (PLAN fact #5): servers, jobs, engine, mods, modpacks, saves,
 # server_files, backup, settings, storage, scenarios. Read rows first, then
 # the confirm-gated mutation rows (S5).
 # --------------------------------------------------------------------------
@@ -480,6 +482,18 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "the others."
         ),
         arg_model=ScenarioGuids,
+    ),
+    # ---------------------------------------------------------------- saves
+    ToolSpec(
+        name="list_server_saves",
+        method="GET",
+        path="/api/servers/{server_id}/saves",
+        description=(
+            "Discover a server's on-disk save points: scenarios with their "
+            "playthroughs and save points, the manager-owned snapshots, and "
+            "the current save selection (mode, pinned uuid, sticky). 404 for "
+            "an unknown server."
+        ),
     ),
     # ------------------------------------------- mutations (confirm = required)
     # Servers: lifecycle. start is gated purely at this layer — the start
@@ -968,6 +982,125 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         arg_model=ServerFileUploads,
         query_model=UploadDirQuery,
         multipart_field="files",
+        confirm=True,
+    ),
+    # Server saves: arming (arm / arm-fresh / clear selection) is explicitly
+    # not running-guarded — the whole point is to be settable while the server
+    # is up; every other route here is refused with 409 while it runs.
+    ToolSpec(
+        name="arm_server_save",
+        method="POST",
+        path="/api/servers/{server_id}/saves/{save_uuid}/arm",
+        description=(
+            "Pin this server to one save point (save_mode=pinned): the next "
+            "start loads that save instead of the latest. sticky=true keeps "
+            "the selection across restarts, otherwise it reverts to latest "
+            "after one use. Not running-guarded — arming is meant to be "
+            "settable while the server is up. 400 if the save point is not "
+            "found."
+        ),
+        arg_model=ArmIn,
+        confirm=True,
+    ),
+    ToolSpec(
+        name="arm_fresh_session",
+        method="POST",
+        path="/api/servers/{server_id}/saves/arm-fresh",
+        description=(
+            "Arm a fresh (no-save) start (save_mode=fresh): the next start "
+            "creates a brand-new session instead of loading any save. "
+            "sticky=true keeps fresh mode across restarts, otherwise the "
+            "selection reverts to latest after one use. Not running-guarded — "
+            "settable while the server is up."
+        ),
+        arg_model=ArmIn,
+        confirm=True,
+    ),
+    ToolSpec(
+        name="clear_save_selection",
+        method="DELETE",
+        path="/api/servers/{server_id}/saves/selection",
+        description=(
+            "Clear the save selection back to 'latest': the next start loads "
+            "the newest save point again (also what deleting the currently "
+            "pinned save does implicitly). Not running-guarded — settable "
+            "while the server is up."
+        ),
+        confirm=True,
+    ),
+    ToolSpec(
+        name="delete_server_save",
+        method="DELETE",
+        path="/api/servers/{server_id}/saves/{save_uuid}",
+        description=(
+            "Delete one save point from disk (its whole save-point "
+            "directory). If it was the currently pinned save, the selection "
+            "is cleared back to latest first. 404 if the save point is not "
+            "found; 409 while that server is running — stop it first."
+        ),
+        confirm=True,
+    ),
+    ToolSpec(
+        name="delete_save_playthrough",
+        method="DELETE",
+        path="/api/servers/{server_id}/saves/playthroughs/{scenario_dir}/{playthrough_nr}",
+        description=(
+            "Delete a whole playthrough — every save point of one "
+            "playthrough_nr under one scenario dir. If the pinned save lived "
+            "inside it, the selection is cleared back to latest. 404 if that "
+            "playthrough is not found; 409 while that server is running — "
+            "stop it first."
+        ),
+        confirm=True,
+    ),
+    ToolSpec(
+        name="create_save_snapshot",
+        method="POST",
+        path="/api/servers/{server_id}/saves/{save_uuid}/snapshot",
+        description=(
+            "Create a manager-owned snapshot (label + tar.gz archive) of one "
+            "save point — it survives save deletions and is never touched by "
+            "the game. 404 if the save point is not found; 409 while the "
+            "server is running or the per-server snapshot cap is exceeded — "
+            "stop it first."
+        ),
+        arg_model=LabelIn,
+        confirm=True,
+    ),
+    ToolSpec(
+        name="rename_save_snapshot",
+        method="PATCH",
+        path="/api/servers/{server_id}/saves/snapshots/{snapshot_id}",
+        description=(
+            "Rename one manager-owned snapshot: changes only its label, the "
+            "archive itself is untouched. 404 for an unknown snapshot id."
+        ),
+        arg_model=LabelIn,
+        confirm=True,
+    ),
+    ToolSpec(
+        name="delete_save_snapshot",
+        method="DELETE",
+        path="/api/servers/{server_id}/saves/snapshots/{snapshot_id}",
+        description=(
+            "Delete one manager-owned snapshot and its archive file from "
+            "disk. Not running-guarded — snapshots are manager data, not "
+            "live saves."
+        ),
+        confirm=True,
+    ),
+    ToolSpec(
+        name="restore_save_snapshot",
+        method="POST",
+        path="/api/servers/{server_id}/saves/snapshots/{snapshot_id}/restore",
+        description=(
+            "Restore one manager-owned snapshot back into the live save dir; "
+            "arm=true (default) re-pins the server to the restored save "
+            "point in the same step. 404 for an unknown snapshot; 400 if its "
+            "recorded save point no longer resolves; 409 while the server is "
+            "running — stop it first."
+        ),
+        arg_model=RestoreIn,
         confirm=True,
     ),
     # Backup / settings

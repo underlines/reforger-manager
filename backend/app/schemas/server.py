@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,6 +51,16 @@ class ServerBase(BaseModel):
     rcon_permission: str = "admin"
     rcon_max_clients: int = Field(default=16, ge=1, le=16)
 
+    persistence_enabled: bool = True
+    auto_save_interval: int = Field(default=10, ge=0, le=60)
+    save_retention: int = Field(default=10, ge=1, le=128)
+    load_session_save: bool = True
+    keep_session_save: bool = False
+    hive_id: int = Field(default=0, ge=0, le=16383)
+    save_mode: Literal["latest", "pinned", "fresh"] = "latest"
+    save_pinned_uuid: str | None = None
+    save_selection_sticky: bool = False
+
 
 class ServerCreate(ServerBase):
     mods: list[ServerModIn] = []
@@ -81,6 +92,15 @@ class ServerUpdate(BaseModel):
     rcon_password: str | None = None
     rcon_permission: str | None = None
     rcon_max_clients: int | None = Field(default=None, ge=1, le=16)
+    persistence_enabled: bool | None = None
+    auto_save_interval: int | None = Field(default=None, ge=0, le=60)
+    save_retention: int | None = Field(default=None, ge=1, le=128)
+    load_session_save: bool | None = None
+    keep_session_save: bool | None = None
+    hive_id: int | None = Field(default=None, ge=0, le=16383)
+    save_mode: Literal["latest", "pinned", "fresh"] | None = None
+    save_pinned_uuid: str | None = None
+    save_selection_sticky: bool | None = None
     mods: list[ServerModIn] | None = None
 
 

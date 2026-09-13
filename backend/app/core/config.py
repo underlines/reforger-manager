@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     files_max_edit_bytes: int = 2_097_152
     # Profile file manager: a single uploaded file larger than this is rejected.
     files_max_upload_bytes: int = 50_000_000
+    # Save snapshots: max snapshots retained per server (create_snapshot refuses,
+    # never auto-deletes, once a server is at/over this cap).
+    save_snapshot_max_per_server: int = 20
+    # Save snapshots: an uploaded snapshot archive whose uncompressed content
+    # exceeds this is rejected by validate_archive (~500MB default).
+    save_upload_max_uncompressed_bytes: int = 500_000_000
     # Explicit allow-list (S19 / PLAN G33). The SPA is served same-origin by
     # FastAPI, so this only affects the Vite dev server and any stray
     # cross-origin caller. Keep localhost:5173 or `npm run dev` breaks; add any

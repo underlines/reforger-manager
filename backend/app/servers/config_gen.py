@@ -67,6 +67,21 @@ def build_config(server, mods: list[ModEntry]) -> dict:
     if server.game_properties:
         game_properties.update(server.game_properties)
 
+    if server.persistence_enabled:
+        game_properties["persistence"] = {
+            "autoSaveInterval": server.auto_save_interval,
+            "saveRetention": server.save_retention,
+            "loadSessionSave": server.load_session_save,
+            "keepSessionSave": server.keep_session_save,
+            "hiveId": server.hive_id,
+        }
+    else:
+        mission_header = game_properties.get("missionHeader")
+        if not isinstance(mission_header, dict):
+            mission_header = {}
+            game_properties["missionHeader"] = mission_header
+        mission_header["m_eSaveTypes"] = 0
+
     config: dict = {
         "bindAddress": server.bind_address or "",
         "bindPort": server.bind_port,

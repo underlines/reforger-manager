@@ -156,6 +156,38 @@ class Supervisor:
                         created_by="supervisor",
                     )
                 )
+
+                save_args: list[str] = []
+                if server.save_mode == "pinned":
+                    # late import: saves <- files <- mods package <- mods.downloader
+                    # <- supervisor (this module), same cycle resolved_mod_entries
+                    # above works around.
+                    from . import saves
+
+                    pinned_uuid = server.save_pinned_uuid
+                    valid = False
+                    if pinned_uuid:
+                        scenarios = await saves.discover(session, server)
+                        valid = any(
+                            sp.uuid == pinned_uuid
+                            for scenario in scenarios
+                            for playthrough in scenario.playthroughs
+                            for sp in playthrough.save_points
+                        )
+                    if valid:
+                        save_args = ["-loadSessionSave", pinned_uuid]
+                    else:
+                        logger.warning(
+                            "server %s: pinned save %s not found on disk, "
+                            "falling back to latest and clearing the selection",
+                            server_id,
+                            pinned_uuid,
+                        )
+                        server.save_mode = "latest"
+                        server.save_pinned_uuid = None
+                elif server.save_mode == "fresh":
+                    save_args = ["-backendFreshSession"]
+
                 await session.commit()
 
             binary = settings.reforger_binary
@@ -187,6 +219,7 @@ class Supervisor:
                 "-maxFPS", "60",
                 "-logLevel", "normal",
             ]
+            args.extend(save_args)
             logger.info("starting server %s: %s", server_id, " ".join(args))
             log_fh = open(log_path, "wb", buffering=0)
             process = await asyncio.create_subprocess_exec(
@@ -215,6 +248,9 @@ class Supervisor:
                     server.last_state = "running"
                     server.last_started_at = active.started_at
                     server.last_exit_code = None
+                    if not server.save_selection_sticky and server.save_mode != "latest":
+                        server.save_mode = "latest"
+                        server.save_pinned_uuid = None
                     await session.commit()
 
             await broadcaster.publish(

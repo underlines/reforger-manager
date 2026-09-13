@@ -39,6 +39,7 @@ from .api import mods as mods_api
 from .api import modpacks as modpacks_api
 from .api import servers as servers_api
 from .api import server_files as server_files_api
+from .api import server_saves as server_saves_api
 from .api import settings as settings_api
 from .api import storage as storage_api
 from .api import scenarios as scenarios_api
@@ -323,6 +324,7 @@ app.include_router(mods_api.router, prefix=_API)
 app.include_router(modpacks_api.router, prefix=_API)
 app.include_router(servers_api.router, prefix=_API)
 app.include_router(server_files_api.router, prefix=_API)
+app.include_router(server_saves_api.router, prefix=_API)
 app.include_router(settings_api.router, prefix=_API)
 app.include_router(storage_api.router, prefix=_API)
 app.include_router(scenarios_api.router, prefix=_API)

@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -61,6 +62,34 @@ class Server(Base, TimestampMixin):
     rcon_password: Mapped[str | None] = mapped_column(String(128))
     rcon_permission: Mapped[str] = mapped_column(String(16), default="admin")
     rcon_max_clients: Mapped[int] = mapped_column(Integer, default=16)
+
+    # Persistence / save system.
+    persistence_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
+    auto_save_interval: Mapped[int] = mapped_column(
+        Integer, default=10, server_default=text("10")
+    )
+    save_retention: Mapped[int] = mapped_column(
+        Integer, default=10, server_default=text("10")
+    )
+    load_session_save: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
+    keep_session_save: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    hive_id: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
+    # Runtime save selection (latest | pinned | fresh).
+    save_mode: Mapped[str] = mapped_column(
+        String(16), default="latest", server_default=text("'latest'")
+    )
+    save_pinned_uuid: Mapped[str | None] = mapped_column(String(64))
+    save_selection_sticky: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
 
     # Last generated config.json + revision pointer.
     config: Mapped[dict | None] = mapped_column(JSONVariant)

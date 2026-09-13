@@ -44,6 +44,12 @@ SERVER_CONFIG_FIELDS: tuple[str, ...] = (
     "rcon_password",
     "rcon_permission",
     "rcon_max_clients",
+    "persistence_enabled",
+    "auto_save_interval",
+    "save_retention",
+    "load_session_save",
+    "keep_session_save",
+    "hive_id",
 )
 
 
@@ -93,6 +99,13 @@ class BackupServer(BaseModel):
     rcon_password: str | None = None
     rcon_permission: str = "admin"
     rcon_max_clients: int = 16
+
+    persistence_enabled: bool = True
+    auto_save_interval: int = 10
+    save_retention: int = 10
+    load_session_save: bool = True
+    keep_session_save: bool = False
+    hive_id: int = 0
 
     mods: list[BackupMod] = []
 

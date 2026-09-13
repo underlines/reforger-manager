@@ -32,8 +32,10 @@ EntryType = Literal["file", "dir", "symlink"]
 
 # Filtered out of listings here, and rejected as a path prefix by the resolver so
 # no route can reach into them by spelling the path out. ``logs/`` has its own
-# Console/Log tab; ``addons_tmp/`` is engine scratch recreated every start.
-EXCLUDED_TOP_LEVEL = frozenset({"logs", "addons_tmp"})
+# Console/Log tab; ``addons_tmp/`` is engine scratch recreated every start;
+# ``snapshots/`` is manager-owned save-snapshot storage (``app.servers.save_snapshots``),
+# with its own list/rename/delete/restore surface, not the generic file browser.
+EXCLUDED_TOP_LEVEL = frozenset({"logs", "addons_tmp", "snapshots"})
 
 _TEXT_SNIFF_BYTES = 8192
 

@@ -99,6 +99,12 @@ type FormState = {
   a2s_address: string;
   a2s_port: string;
   rcon_address: string;
+  persistence_enabled: boolean;
+  auto_save_interval: string;
+  save_retention: string;
+  load_session_save: boolean;
+  keep_session_save: boolean;
+  hive_id: string;
   advancedGpText: string;
   extraConfigText: string;
 };
@@ -124,6 +130,12 @@ const CREATE_DEFAULTS: FormState = {
   a2s_address: "0.0.0.0",
   a2s_port: "17777",
   rcon_address: "0.0.0.0",
+  persistence_enabled: true,
+  auto_save_interval: "10",
+  save_retention: "10",
+  load_session_save: true,
+  keep_session_save: false,
+  hive_id: "0",
   advancedGpText: "",
   extraConfigText: "",
 };
@@ -153,6 +165,12 @@ function initFromServer(server: DetailServer): FormState {
     a2s_address: server.a2s_address,
     a2s_port: String(server.a2s_port),
     rcon_address: server.rcon_address,
+    persistence_enabled: server.persistence_enabled,
+    auto_save_interval: String(server.auto_save_interval),
+    save_retention: String(server.save_retention),
+    load_session_save: server.load_session_save,
+    keep_session_save: server.keep_session_save,
+    hive_id: String(server.hive_id),
     advancedGpText: Object.keys(extraGp).length ? JSON.stringify(extraGp, null, 2) : "",
     extraConfigText:
       server.extra_config && Object.keys(server.extra_config).length
@@ -414,13 +432,25 @@ export function ServerForm(props: ServerFormProps) {
 
   const nameOk = form.name.trim().length > 0;
   const rconMax = Number(form.rcon_max_clients.trim());
+  const autoSave = Number(form.auto_save_interval.trim());
+  const saveRetention = Number(form.save_retention.trim());
+  const hiveId = Number(form.hive_id.trim());
   const numbersOk =
     [form.max_players, form.bind_port, form.public_port, form.a2s_port, form.rcon_port].every(
       isPositiveInt,
     ) &&
     /^\d+$/.test(form.rcon_max_clients.trim()) &&
     rconMax >= 1 &&
-    rconMax <= 16;
+    rconMax <= 16 &&
+    /^\d+$/.test(form.auto_save_interval.trim()) &&
+    autoSave >= 0 &&
+    autoSave <= 60 &&
+    /^\d+$/.test(form.save_retention.trim()) &&
+    saveRetention >= 1 &&
+    saveRetention <= 128 &&
+    /^\d+$/.test(form.hive_id.trim()) &&
+    hiveId >= 0 &&
+    hiveId <= 16383;
   const jsonOk = gpParse.ok && extraParse.ok;
 
   const fullBody = () => ({
@@ -446,6 +476,12 @@ export function ServerForm(props: ServerFormProps) {
     rcon_password: form.rcon_password || null,
     rcon_permission: form.rcon_permission,
     rcon_max_clients: Number(form.rcon_max_clients.trim()),
+    persistence_enabled: form.persistence_enabled,
+    auto_save_interval: Number(form.auto_save_interval.trim()),
+    save_retention: Number(form.save_retention.trim()),
+    load_session_save: form.load_session_save,
+    keep_session_save: form.keep_session_save,
+    hive_id: Number(form.hive_id.trim()),
   });
 
   const buildPatch = (): Record<string, unknown> => {
@@ -483,6 +519,9 @@ export function ServerForm(props: ServerFormProps) {
       ["a2s_port", form.a2s_port, server.a2s_port],
       ["rcon_port", form.rcon_port, server.rcon_port],
       ["rcon_max_clients", form.rcon_max_clients, server.rcon_max_clients],
+      ["auto_save_interval", form.auto_save_interval, server.auto_save_interval],
+      ["save_retention", form.save_retention, server.save_retention],
+      ["hive_id", form.hive_id, server.hive_id],
     ];
     for (const [key, raw, current] of numericFields) {
       const parsed = Number(raw.trim());
@@ -492,6 +531,12 @@ export function ServerForm(props: ServerFormProps) {
     if (form.visible !== server.visible) patch.visible = form.visible;
     if (form.is_favourite !== server.is_favourite) patch.is_favourite = form.is_favourite;
     if (form.rcon_enabled !== server.rcon_enabled) patch.rcon_enabled = form.rcon_enabled;
+    if (form.persistence_enabled !== server.persistence_enabled)
+      patch.persistence_enabled = form.persistence_enabled;
+    if (form.load_session_save !== server.load_session_save)
+      patch.load_session_save = form.load_session_save;
+    if (form.keep_session_save !== server.keep_session_save)
+      patch.keep_session_save = form.keep_session_save;
 
     const gameProperties = mergedGameProperties();
     if (canon(gameProperties) !== canon(server.game_properties ?? null))
@@ -753,6 +798,68 @@ export function ServerForm(props: ServerFormProps) {
                 </div>
               </div>
             ))}
+          </section>
+
+          <section className="grid gap-3">
+            <p className="metric-label">Persistence</p>
+            <CheckField
+              label="Enable save/load persistence"
+              checked={form.persistence_enabled}
+              onChange={(value) => set("persistence_enabled", value)}
+            />
+            <div
+              className={cn(
+                "grid gap-3 sm:grid-cols-2",
+                !form.persistence_enabled && "opacity-50",
+              )}
+            >
+              <Field label="Autosave interval (minutes)">
+                <Input
+                  type="number"
+                  min={0}
+                  max={60}
+                  disabled={!form.persistence_enabled}
+                  value={form.auto_save_interval}
+                  onChange={(event) => set("auto_save_interval", event.target.value)}
+                />
+                <span className="block text-[10px] text-stone-500">0 disables autosave</span>
+              </Field>
+              <Field label="Save points to keep">
+                <Input
+                  type="number"
+                  min={1}
+                  max={128}
+                  disabled={!form.persistence_enabled}
+                  value={form.save_retention}
+                  onChange={(event) => set("save_retention", event.target.value)}
+                />
+              </Field>
+              <CheckField
+                label="Load latest save on server start"
+                checked={form.load_session_save}
+                onChange={(value) => set("load_session_save", value)}
+                disabled={!form.persistence_enabled}
+              />
+              <CheckField
+                label="Keep saves after mission ends"
+                checked={form.keep_session_save}
+                onChange={(value) => set("keep_session_save", value)}
+                disabled={!form.persistence_enabled}
+              />
+              <Field label="Hive ID">
+                <Input
+                  type="number"
+                  min={0}
+                  max={16383}
+                  disabled={!form.persistence_enabled}
+                  value={form.hive_id}
+                  onChange={(event) => set("hive_id", event.target.value)}
+                />
+                <span className="block text-[10px] text-stone-500">
+                  Only needed when multiple servers share one persistence database
+                </span>
+              </Field>
+            </div>
           </section>
 
           <details className="border border-stone-800 p-3">
