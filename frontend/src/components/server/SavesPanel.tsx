@@ -51,6 +51,55 @@ function findSaveByUuid(data: SavesListOut | undefined, uuid: string | null): Sa
   return null;
 }
 
+// The engine loads the newest save point of the scenario matching this
+// server's current config — which is exactly the first entry of the first
+// (i.e. newest) playthrough of the first matching scenario, since discover()
+// already sorts every level descending.
+function resolveLatestSave(data: SavesListOut): SavePointOut | null {
+  const scenario = data.scenarios.find((s) => s.matches_current_scenario);
+  return scenario?.playthroughs[0]?.save_points[0] ?? null;
+}
+
+type NextBootBanner = { text: string; sticky: boolean; showCancel: boolean };
+
+function resolveNextBootBanner(
+  data: SavesListOut,
+  server: DetailServer,
+  latestSave: SavePointOut | null,
+): NextBootBanner | null {
+  const selection = data.selection;
+  if (selection.mode === "pinned") {
+    const sp = findSaveByUuid(data, selection.pinned_uuid);
+    return {
+      text: sp
+        ? `Next start: playthrough ${sp.playthrough_nr} · save point ${sp.save_point_nr} · ${fmtDate(sp.saved_at)}`
+        : "Next start: a pinned save point",
+      sticky: selection.sticky,
+      showCancel: true,
+    };
+  }
+  if (selection.mode === "fresh") {
+    return { text: "Next start: a new playthrough", sticky: selection.sticky, showCancel: true };
+  }
+  // mode === "latest": what actually happens depends on the persistence config,
+  // not just the (absent) selection — surface the real answer either way.
+  if (!server.load_session_save) {
+    return {
+      text: "Next start: no save will load — auto-load on boot is off for this server. Every start begins a fresh session (change this on the Config tab).",
+      sticky: false,
+      showCancel: false,
+    };
+  }
+  if (latestSave) {
+    return {
+      text: `Next start: playthrough ${latestSave.playthrough_nr} · save point ${latestSave.save_point_nr} · ${fmtDate(latestSave.saved_at)} (auto — latest save)`,
+      sticky: false,
+      showCancel: false,
+    };
+  }
+  return null;
+}
+
 function slotOccupied(data: SavesListOut | undefined, snap: SnapshotOut): boolean {
   if (!data || !snap.scenario_dir || !snap.playthrough_dir_name || !snap.save_point_dir_name) return false;
   const scenario = data.scenarios.find((s) => s.scenario_dir === snap.scenario_dir);
@@ -436,31 +485,34 @@ export function SavesPanel({
 
   const selection = data.selection;
   const hasAnySavePoints = data.scenarios.some((s) => s.playthroughs.some((p) => p.save_points.length > 0));
+  const latestSave = selection.mode === "latest" ? resolveLatestSave(data) : null;
+  const nextBootUuid =
+    selection.mode === "pinned"
+      ? selection.pinned_uuid
+      : selection.mode === "latest" && server.load_session_save
+        ? (latestSave?.uuid ?? null)
+        : null;
+  const nextBootBanner = resolveNextBootBanner(data, server, latestSave);
 
   return (
     <div className="grid gap-6">
-      {selection.mode !== "latest" && (
+      {nextBootBanner && (
         <div
           className={
-            selection.sticky
+            nextBootBanner.sticky
               ? "flex flex-wrap items-center justify-between gap-2 rounded-sm border border-amber-700 bg-amber-950/50 px-3 py-2 text-xs text-amber-300"
               : "flex flex-wrap items-center justify-between gap-2 rounded-sm border border-stone-700 bg-stone-900/60 px-3 py-2 text-xs text-stone-300"
           }
         >
           <span>
-            {selection.mode === "pinned"
-              ? (() => {
-                  const sp = findSaveByUuid(data, selection.pinned_uuid);
-                  return sp
-                    ? `Next start: playthrough ${sp.playthrough_nr} · save point ${sp.save_point_nr} · ${fmtDate(sp.saved_at)}`
-                    : "Next start: a pinned save point";
-                })()
-              : "Next start: a new playthrough"}
-            {selection.sticky && " — Every restart will use this setting."}
+            {nextBootBanner.text}
+            {nextBootBanner.sticky && " — Every restart will use this setting."}
           </span>
-          <Button size="sm" variant="outline" onClick={() => void cancelSelection()}>
-            Cancel
-          </Button>
+          {nextBootBanner.showCancel && (
+            <Button size="sm" variant="outline" onClick={() => void cancelSelection()}>
+              Cancel
+            </Button>
+          )}
         </div>
       )}
 
@@ -483,10 +535,11 @@ export function SavesPanel({
       {actionError && <p className="error">{actionError}</p>}
 
       <section className="grid gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-display text-sm font-bold uppercase tracking-widest text-stone-300">
-            Save points
-          </h3>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-800 pb-3">
+          <p className="text-xs text-stone-500">
+            Starts a brand-new playthrough on next start. Existing playthroughs and their save points
+            are kept, not deleted.
+          </p>
           <Button
             size="sm"
             variant="outline"
@@ -495,10 +548,9 @@ export function SavesPanel({
             Start fresh playthrough
           </Button>
         </div>
-        <p className="-mt-1 text-xs text-stone-500">
-          Starts a brand-new playthrough on next start. Existing playthroughs and their save points
-          are kept, not deleted.
-        </p>
+        <h3 className="font-display text-sm font-bold uppercase tracking-widest text-stone-300">
+          Save points
+        </h3>
         {!hasAnySavePoints ? (
           <Empty label="This server hasn't written a save yet. Save points appear after the first autosave (every 10 minutes) or a clean stop." />
         ) : (
@@ -579,6 +631,9 @@ export function SavesPanel({
                             </td>
                             <td className="py-2 pr-3">
                               <span className="flex flex-wrap gap-1">
+                                {nextBootUuid && sp.uuid === nextBootUuid && (
+                                  <Badge tone="good">will load next start</Badge>
+                                )}
                                 {!sp.matches_current_scenario && <Badge tone="warn">different scenario</Badge>}
                                 {sp.engine_drift && (
                                   <Badge tone="warn">made on {sp.game_version ?? "unknown version"}</Badge>
