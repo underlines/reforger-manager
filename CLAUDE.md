@@ -139,3 +139,6 @@ Keep every `data/*/.gitkeep`.
   but `CONFIGS_DIR/{id}.json` is regenerated from the DB by `supervisor.start`
   on every server start — a hand-edit there is silently clobbered, which is why
   the Files tab shows it read-only.
+- **New model columns self-heal on restart** (`create_all` mode) — but give
+  them a `server_default` or they can't; see README "Deploying → Schema
+  migrations".

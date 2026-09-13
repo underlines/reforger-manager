@@ -2,7 +2,8 @@
 
 Lifespan wiring:
   1. schema: Alembic ``upgrade head`` if ``DB_MIGRATE_ON_STARTUP=alembic``,
-     otherwise ``Base.metadata.create_all``.
+     otherwise ``Base.metadata.create_all`` plus an additive missing-column
+     self-heal (new model columns reach an existing table automatically).
   2. seed the ``engine`` singleton (id=1) from the on-disk appmanifest.
   3. create the bootstrap admin from ADMIN_USERNAME / ADMIN_PASSWORD if the
      users table is empty.
@@ -104,10 +105,57 @@ async def apply_nightly_settings(enabled: bool, hour: int) -> None:
 
 
 # --------------------------------------------------------------------- schema
+def _sync_missing_columns(sync_conn) -> None:
+    """Additive self-heal for ``create_all`` mode.
+
+    ``Base.metadata.create_all`` only creates missing *tables* — it never
+    ``ALTER TABLE``s one that already exists, so a column added to a model
+    (e.g. a sprint's new ``Server`` fields) never reaches a database that
+    already has that table. Every column this repo adds carries a
+    ``server_default`` (see ``migrations/versions/``), so adding it live is
+    safe. Only additive drift is handled here — renames/type changes/drops
+    still need ``DB_MIGRATE_ON_STARTUP=alembic`` and a real migration.
+    """
+    from sqlalchemy import inspect as sa_inspect, text
+    from sqlalchemy.schema import CreateColumn
+
+    inspector = sa_inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # brand-new table — create_all already created it
+        existing_columns = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing_columns:
+                continue
+            if not column.nullable and column.server_default is None:
+                # Can't add a NOT NULL column to a table with existing rows
+                # without a default to backfill them. Every column this repo
+                # intentionally adds carries a server_default (the convention,
+                # see migrations/versions/); one without one is schema drift
+                # this self-heal can't safely resolve on its own.
+                logger.error(
+                    "schema drift: %s.%s is missing and NOT NULL with no "
+                    "server_default — cannot self-heal; run with "
+                    "DB_MIGRATE_ON_STARTUP=alembic or add it manually",
+                    table.name,
+                    column.name,
+                )
+                continue
+            ddl = CreateColumn(column).compile(dialect=sync_conn.dialect)
+            logger.warning(
+                "schema drift: adding missing column %s.%s (create_all self-heal)",
+                table.name,
+                column.name,
+            )
+            sync_conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN {ddl}'))
+
+
 async def _create_all() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    logger.info("schema ensured via Base.metadata.create_all")
+        await conn.run_sync(_sync_missing_columns)
+    logger.info("schema ensured via Base.metadata.create_all (+ missing-column sync)")
 
 
 def _alembic_upgrade_blocking() -> None:

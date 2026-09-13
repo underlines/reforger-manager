@@ -205,6 +205,17 @@ git-stack that rebuilds the image on a webhook POSTed from a GitHub Actions job
 on `main`. The build then happens on the deploy host (`build: .`), so it takes a
 few minutes.
 
+### Schema migrations
+
+`DB_MIGRATE_ON_STARTUP=create_all` (the default) creates missing tables, then
+self-heals any column a model has that an existing table doesn't — safe
+because this repo's columns carry a `server_default`. New Alembic migrations
+reach a `create_all` deployment automatically on next restart, no manual step.
+
+A column that's NOT NULL with no `server_default`, or a rename/type
+change/drop, can't self-heal — that needs `DB_MIGRATE_ON_STARTUP=alembic` and
+`alembic upgrade head` for real.
+
 ### Image internals
 
 Multi-stage: a `node` stage runs `npm ci && npm run build`, then the runtime
