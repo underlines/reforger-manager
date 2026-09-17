@@ -81,11 +81,36 @@ async def _upsert_local(session: AsyncSession, sm: ScannedMod) -> None:
             )
         )
 
-    # Replace this mod's scenarios with the offline scan.
-    await session.execute(
-        delete(ModScenario).where(ModScenario.mod_guid == sm.guid)
-    )
-    for game_id, _path in sm.scenarios:
+    # Replace this mod's *offline-only* scenario rows with the fresh scan, but
+    # never touch a row that was already enriched from the Workshop API
+    # (name/game_mode set). The offline scan's game_id is only a guess --
+    # "{mod_guid}" + path (see scanner.parse_scenarios) -- and is frequently
+    # wrong, since the real per-scenario resource guid need not match the
+    # mod's own guid. Blindly deleting+reinserting here (as this used to do)
+    # threw away correct API data on every rescan (e.g. a redownload via
+    # refresh_local_mods, which never re-enriches afterward).
+    existing_scenarios = (
+        await session.execute(
+            select(ModScenario).where(ModScenario.mod_guid == sm.guid)
+        )
+    ).scalars().all()
+
+    # Correlate by path (the part of game_id after the first "}"), not by
+    # game_id string equality -- that's the only thing the offline guess and
+    # the real API-sourced game_id are guaranteed to share.
+    enriched_paths: set[str] = set()
+    offline_only_rows: list[ModScenario] = []
+    for srow in existing_scenarios:
+        if srow.name is not None or srow.game_mode is not None:
+            enriched_paths.add(srow.game_id.partition("}")[2] or srow.game_id)
+        else:
+            offline_only_rows.append(srow)
+
+    for srow in offline_only_rows:
+        await session.delete(srow)
+    for game_id, path in sm.scenarios:
+        if path in enriched_paths:
+            continue  # already have real, API-sourced data for this scenario
         session.add(ModScenario(mod_guid=sm.guid, game_id=game_id))
 
 
