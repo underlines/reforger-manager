@@ -34,7 +34,7 @@ from ..a2s.client import A2SConnectionError, A2SError, A2STimeoutError, query as
 from ..core.events import broadcaster, server_console_channel
 from ..core.jobs import job_manager
 from ..core.security import get_current_user
-from ..models import Server, ServerMod
+from ..models import Mod, Server, ServerMod
 from ..mods.logview import (
     current_log,
     is_spam_line,
@@ -87,7 +87,7 @@ async def _load(session: AsyncSession, server_id: int) -> Server:
     return server
 
 
-def _apply_mods(server: Server, mods) -> None:
+async def _apply_mods(session: AsyncSession, server: Server, mods) -> None:
     """Replace ``server.mods`` from a payload, preserving per-server pins.
 
     The transport is a destructive replace (the whole set is rebuilt), so a
@@ -101,6 +101,14 @@ def _apply_mods(server: Server, mods) -> None:
     absent from the new payload loses its pin along with its row, as intended.
     ``pinned_at`` is never taken from the payload (``ServerModIn`` has no such
     field); it is only ever carried forward from the prior row.
+
+    ``mod_name`` gets the same "don't clobber on omission" treatment: a caller
+    that patches load order or ``enabled`` without echoing every mod's display
+    name must not blank it. A surviving row with no name in the payload keeps
+    its existing ``mod_name``; a brand-new row with no name in the payload is
+    resolved from the mod library instead of being left ``NULL`` (an MCP/API
+    caller building a mods[] from bare GUIDs regressed exactly this way once
+    already -- library names exist, use them).
     """
     prior = {sm.mod_guid: sm for sm in server.mods}
     incoming = {m.mod_guid for m in mods}
@@ -111,12 +119,30 @@ def _apply_mods(server: Server, mods) -> None:
     for sm in list(server.mods):
         if sm.mod_guid not in incoming:
             server.mods.remove(sm)
+
+    # Batch-resolve library names for new rows that arrive with no name, rather
+    # than one SELECT per mod.
+    needs_library_name = {
+        m.mod_guid for m in mods if not m.mod_name and m.mod_guid not in prior
+    }
+    library_names: dict[str, str | None] = {}
+    if needs_library_name:
+        rows = (
+            await session.execute(
+                select(Mod.guid, Mod.name).where(Mod.guid.in_(needs_library_name))
+            )
+        ).all()
+        library_names = {guid: name for guid, name in rows}
+
     for idx, m in enumerate(mods):
         row = prior.get(m.mod_guid)
         if row is None:
             row = ServerMod(mod_guid=m.mod_guid)
             server.mods.append(row)
-        row.mod_name = m.mod_name
+            row.mod_name = m.mod_name or library_names.get(m.mod_guid)
+        elif m.mod_name:
+            row.mod_name = m.mod_name
+        # else: surviving row, no name in the payload -- keep row.mod_name as is.
         row.load_order = m.load_order if m.load_order is not None else idx
         row.enabled = m.enabled
         if m.pinned_version is not None:
@@ -214,7 +240,7 @@ async def create_server(
 ) -> Server:
     data = body.model_dump(exclude={"mods"})
     server = Server(**data)
-    _apply_mods(server, body.mods)
+    await _apply_mods(session, server, body.mods)
     session.add(server)
     await session.commit()
     return await _load(session, server.id)
@@ -235,7 +261,7 @@ async def update_server(
     for key, value in patch.items():
         setattr(server, key, value)
     if mods is not None:
-        _apply_mods(server, body.mods)
+        await _apply_mods(session, server, body.mods)
     await session.commit()
     return await _load(session, server_id)
 
@@ -352,7 +378,7 @@ async def preview_generated_config(
     for key, value in patch.items():
         setattr(server, key, value)
     if mods is not None:
-        _apply_mods(server, body.mods)
+        await _apply_mods(session, server, body.mods)
     from ..core.config import settings
 
     return ServerConfigOut(

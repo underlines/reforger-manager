@@ -224,7 +224,7 @@ async def apply_modpack(
             )
             for idx, it in enumerate(pack_items)
         ]
-        _apply_mods(server, incoming)
+        await _apply_mods(session, server, incoming)
     else:  # append -- pure add, existing rows (and their pins) untouched
         assigned = {sm.mod_guid for sm in server.mods}
         next_order = max((sm.load_order for sm in server.mods), default=-1) + 1

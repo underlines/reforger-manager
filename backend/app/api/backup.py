@@ -196,14 +196,14 @@ async def import_backup(
             continue
         if action == "create":
             srv = Server(**{field: getattr(entry, field) for field in SERVER_CONFIG_FIELDS})
-            _apply_mods(srv, _mods_payload(entry.mods))
+            await _apply_mods(session, srv, _mods_payload(entry.mods))
             _restore_pinned_at(srv, entry.mods)
             session.add(srv)
         elif action == "replace":
             srv = existing_servers[entry.name]
             for field in SERVER_CONFIG_FIELDS:
                 setattr(srv, field, getattr(entry, field))
-            _apply_mods(srv, _mods_payload(entry.mods))
+            await _apply_mods(session, srv, _mods_payload(entry.mods))
             _restore_pinned_at(srv, entry.mods)
 
     modpack_plan: list[BackupItemPlan] = []
