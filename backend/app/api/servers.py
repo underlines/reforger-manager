@@ -43,6 +43,7 @@ from ..mods.logview import (
     normalise_severity,
     read_log_download,
     search_log,
+    tail_log_lines,
 )
 from ..mods.freespace import guard_update_scope
 from ..mods.pinning import CurrentEngineBuildMissing, PinRecordNotFound, pin_server_mod, unpin_server_mod
@@ -558,6 +559,7 @@ async def get_log(
     severity: str | None = Query(default=None),
     hide_spam: bool = Query(default=True),
     q: str | None = Query(default=None),
+    tail: int | None = Query(default=None, ge=1, le=1000),
     download: bool = Query(default=False),
     session: AsyncSession = Depends(get_session),
 ):
@@ -583,6 +585,8 @@ async def get_log(
     if q is not None:
         result = search_log(server_id, q, severity=severity, hide_spam=hide_spam)
         lines, extra = result.matches, {"query": q, "scanned_bytes": result.scanned_bytes, "truncated": result.truncated}
+    elif tail is not None:
+        lines, extra = tail_log_lines(server_id, tail, severity=severity, hide_spam=hide_spam), {}
     else:
         lines, extra = iter_log_lines(server_id, severity=severity, hide_spam=hide_spam), {}
     return {"server_id": server_id, "lines": [asdict(line) for line in lines], **extra}

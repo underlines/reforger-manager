@@ -57,6 +57,7 @@ from .logview import (
     iter_log_lines,
     read_log_download,
     search_log,
+    tail_log_lines,
 )
 from .workshop import (
     ModNotFound,
@@ -99,6 +100,7 @@ __all__ = [
     "current_log",
     "iter_log_lines",
     "search_log",
+    "tail_log_lines",
     "read_log_download",
     "LogFile",
     "LogLine",

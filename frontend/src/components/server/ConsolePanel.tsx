@@ -17,11 +17,20 @@ export function ConsolePanel({ id }: { id: string }) {
   if (severity) params.set("severity", severity);
   params.set("hide_spam", String(hideSpam));
   if (search.trim()) params.set("q", search.trim());
-  // The server's unsearched log endpoint is intentionally unbounded; only request its bounded search mode.
+  // The server's unsearched log endpoint is unbounded unless `tail` is given; use its bounded search mode for queries.
   const fallback = useQuery({
     queryKey: ["server-log", id, severity, hideSpam, search],
     queryFn: () => api<LogResponse>(`/api/servers/${id}/log?${params}`),
     enabled: Boolean(search.trim()),
+  });
+  const historyParams = new URLSearchParams();
+  if (severity) historyParams.set("severity", severity);
+  historyParams.set("hide_spam", String(hideSpam));
+  historyParams.set("tail", String(tailLimit));
+  // Seeds the view with the last tailLimit stored lines so the console isn't empty until new lines stream in.
+  const history = useQuery({
+    queryKey: ["server-log-tail", id, severity, hideSpam],
+    queryFn: () => api<LogResponse>(`/api/servers/${id}/log?${historyParams}`),
   });
   useEffect(() => {
     setTail([]);
@@ -54,7 +63,8 @@ export function ConsolePanel({ id }: { id: string }) {
     }
     return () => socket?.close();
   }, [id]);
-  const displayed = [...(fallback.data?.lines ?? []), ...tail]
+  const base = search.trim() ? (fallback.data?.lines ?? []) : (history.data?.lines ?? []);
+  const displayed = [...base, ...tail]
     .filter((line) => (!severity || line.severity === severity) && (!hideSpam || !line.is_spam))
     .slice(-tailLimit);
   useEffect(() => {
@@ -94,7 +104,7 @@ export function ConsolePanel({ id }: { id: string }) {
         placeholder="Search stored console log"
       />
       <p className="text-xs text-stone-400">
-        Live tail is bounded to {tailLimit} lines. Stored log search is the fallback.
+        Shows the last {tailLimit} lines and streams live updates. Use search to look further back in the stored log.
       </p>
       {fallback.isError && <p className="error">Stored log could not be loaded.</p>}
       <pre ref={preRef} className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words border border-stone-800 bg-stone-950 p-3 text-xs">

@@ -8,6 +8,7 @@ without changing the running process or its files.
 from __future__ import annotations
 
 import re
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -185,6 +186,26 @@ def iter_log_lines(
                 yield LogLine(line_number, text, detected, spam)
     except OSError:
         return
+
+
+def tail_log_lines(
+    server_id: int,
+    n: int,
+    *,
+    severity: str | None = None,
+    hide_spam: bool = True,
+) -> list[LogLine]:
+    """Return up to the last ``n`` matching lines without buffering the whole log.
+
+    A bounded ``deque`` keeps memory proportional to ``n`` even for a large
+    log, unlike :func:`iter_log_lines` consumed in full.
+    """
+    if n < 1:
+        raise ValueError("n must be positive")
+    window: deque[LogLine] = deque(maxlen=n)
+    for line in iter_log_lines(server_id, severity=severity, hide_spam=hide_spam):
+        window.append(line)
+    return list(window)
 
 
 def search_log(
