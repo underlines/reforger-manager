@@ -86,7 +86,9 @@ async def test_green_report_and_exact_json_shape(session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_engine_mismatch_is_blocked(session, monkeypatch):
+async def test_engine_mismatch_older_version_warns(session, monkeypatch):
+    # S1: an addon declaring an *older* game version than the installed engine
+    # is a built-against marker, not a compat gate — it warns, it doesn't block.
     session.add_all([
         Engine(id=1, installed_build="24501482", installed_version="1.8.0.10"),
         Server(id=2, name="mismatch"), ServerMod(server_id=2, mod_guid=GUID_A),
@@ -101,12 +103,13 @@ async def test_engine_mismatch_is_blocked(session, monkeypatch):
     monkeypatch.setattr(preflight_module, "workshop", fake)
 
     report = await preflight_module.preflight(session, 2)
-    assert report.verdict == "blocked"
-    assert any(check.name == f"Engine compatibility {GUID_A}" and check.level == "blocked" for check in report.checks)
+    assert report.verdict == "warn"
+    assert any(check.name == f"Engine compatibility {GUID_A}" and check.level == "warn" for check in report.checks)
 
 
 @pytest.mark.asyncio
-async def test_ronin_is_blocked_with_current_build_fallback_before_server_run(session, monkeypatch):
+async def test_ronin_older_version_warns_with_current_build_fallback_before_server_run(session, monkeypatch):
+    # S1: same as above, via the seeded-current-build path (no prior console log).
     session.add_all([
         Server(id=7, name="ronin"), ServerMod(server_id=7, mod_guid=GUID_A),
         Mod(guid=GUID_A, is_local=True),
@@ -125,10 +128,10 @@ async def test_ronin_is_blocked_with_current_build_fallback_before_server_run(se
 
     report = await preflight_module.preflight(session, 7)
 
-    assert report.verdict == "blocked"
+    assert report.verdict == "warn"
     assert any(
         check.name == f"Engine compatibility {GUID_A}"
-        and check.level == "blocked"
+        and check.level == "warn"
         and "1.2.1.173" in check.detail
         and "1.8.0.10" in check.detail
         for check in report.checks

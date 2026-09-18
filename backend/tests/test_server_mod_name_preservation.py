@@ -83,7 +83,11 @@ class ServerModNamePreservationTests(unittest.IsolatedAsyncioTestCase):
             return server.id
 
     async def _patch_mods(self, server_id: int, mods: list[dict]) -> httpx.Response:
-        return await self.client.patch(f"/api/servers/{server_id}", json={"mods": mods})
+        return await self.client.patch(
+            f"/api/servers/{server_id}",
+            params={"include": "mods"},
+            json={"mods": mods},
+        )
 
     # ---------------------------------------------------------------- tests
     async def test_surviving_row_keeps_its_name_when_payload_omits_it(self) -> None:

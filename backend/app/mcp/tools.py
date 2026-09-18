@@ -37,7 +37,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from ..schemas.backup import BackupDocument
 from ..schemas.job import JobPruneIn
-from ..schemas.mod import ModAddIn, ModDownloadIn, ModVerifyIn
+from ..schemas.mod import ModAddIn, ModBatchDownloadIn, ModDownloadIn, ModVerifyIn
 from ..schemas.modpack import (
     ModpackApplyIn,
     ModpackCreate,
@@ -97,12 +97,18 @@ class ServerConfigQuery(BaseModel):
 
 
 class ModListFilters(BaseModel):
-    """Optional filters for list_mods; every field may be omitted."""
+    """Optional filters for list_mods; every field may be omitted.
+
+    ``compact`` defaults to true for MCP callers: it drops ``required_by`` and
+    ``thumbnail`` from each row, which is what keeps a 259-mod library response
+    under the MCP size ceiling. Pass ``compact=false`` for the full REST shape.
+    """
 
     local: bool | None = None
     q: str | None = None
     update: bool | None = None
     state: str | None = None
+    compact: bool = True
 
 
 class WorkshopSearchQuery(BaseModel):
@@ -299,7 +305,9 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "engine build, and which servers/modpacks reference each mod. "
             "Optional filters: local=true only downloaded mods; q= name "
             "substring; update=true only mods with an update available; "
-            "state= Workshop api_state (e.g. 'ok', 'deleted')."
+            "state= Workshop api_state (e.g. 'ok', 'deleted'). Returns the "
+            "compact shape by default (no required_by/thumbnail); pass "
+            "compact=false for the full REST shape."
         ),
         arg_model=ModListFilters,
     ),
@@ -731,9 +739,26 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
             "optionally pinned to an exact Workshop version. Side effect: writes to "
             "the mod disk cache (steamcmd). 404 if the GUID is not a library row, "
             "400/409 if the free-space guard trips. Returns the enqueued job "
-            "({job_id, kind}) immediately — poll it with wait_for_job(job_id)."
+            "({job_id, kind}) immediately — poll it with wait_for_job(job_id). Thin "
+            "wrapper over download_mods with a single-element GUID list."
         ),
         arg_model=ModDownloadIn,
+        confirm=True,
+    ),
+    ToolSpec(
+        name="download_mods",
+        method="POST",
+        path="/api/mods/download",
+        description=(
+            "Force a (re)download of one or more library mods' addon files by "
+            "16-hex GUID in a single job — one engine spawn for the whole batch, "
+            "not one per mod. Optional per-GUID Workshop version pins. Side "
+            "effect: writes to the mod disk cache (steamcmd). 404 if any GUID is "
+            "not a library row, 400/409 if the free-space guard trips over the "
+            "whole batch. Returns the enqueued job ({job_id, kind}) immediately — "
+            "poll it with wait_for_job(job_id)."
+        ),
+        arg_model=ModBatchDownloadIn,
         confirm=True,
     ),
     ToolSpec(

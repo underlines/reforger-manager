@@ -129,6 +129,43 @@ async def test_offline_only_placeholder_still_refreshed_normally(sessionmaker, m
 
 
 @pytest.mark.asyncio
+async def test_unchanged_offline_scenario_survives_a_second_rescan(sessionmaker, monkeypatch):
+    """A rescan that reproduces the *same* offline game_id must not crash.
+
+    Caught live (2026-09-18) running a real `mod_sync` against a running
+    stack: deleting the existing offline-only row and unconditionally
+    re-adding a new row with the same ``game_id`` collides with itself on
+    the unique ``(mod_guid, game_id)`` constraint, because a SQLAlchemy
+    flush applies pending inserts before pending deletes. This is the
+    ordinary case on every *second* scan of a mod whose scenario list
+    hasn't changed -- i.e. nearly every real ``mod_sync`` run.
+    """
+    game_id = "{" + GUID + "}Missions/ConflictPVERemixedVanilla2_US.conf"
+    path = "Missions/ConflictPVERemixedVanilla2_US.conf"
+
+    async with sessionmaker() as s:
+        s.add(Mod(guid=GUID, is_local=True, name="WCS Everon"))
+        s.add(ModScenario(mod_guid=GUID, game_id=game_id))
+        await s.commit()
+
+    # Second scan reports the exact same offline-guessed scenario id.
+    monkeypatch.setattr(
+        sync_mod, "scan_all",
+        lambda: ScanResult(mods=[_scanned(scenarios=[(game_id, path)])]),
+    )
+    found = await sync_mod.refresh_local_mods([GUID])  # must not raise
+    assert found == [GUID]
+
+    async with sessionmaker() as s:
+        rows = (
+            await s.execute(select(ModScenario).where(ModScenario.mod_guid == GUID))
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].game_id == game_id
+        assert rows[0].name is None
+
+
+@pytest.mark.asyncio
 async def test_fresh_mod_with_no_existing_scenarios_gets_placeholders(sessionmaker, monkeypatch):
     game_id = "{" + GUID + "}Missions/Some_Scenario.conf"
     monkeypatch.setattr(

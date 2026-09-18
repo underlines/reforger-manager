@@ -22,8 +22,10 @@ import asyncio
 import copy
 from collections import defaultdict, deque
 from dataclasses import asdict
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, WebSocket, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -254,8 +256,19 @@ async def get_server(server_id: int, session: AsyncSession = Depends(get_session
 
 @router.patch("/{server_id}", response_model=ServerOut, dependencies=authed)
 async def update_server(
-    server_id: int, body: ServerUpdate, session: AsyncSession = Depends(get_session)
-) -> Server:
+    server_id: int,
+    body: ServerUpdate,
+    include: Annotated[str | None, Query()] = None,
+    session: AsyncSession = Depends(get_session),
+) -> Server | JSONResponse:
+    """Patch a definition (PATCH semantics).
+
+    The response is trimmed by default: the full ``mods`` array (every
+    ``ServerMod`` row, ~900 lines on a 78-mod server) is replaced by a
+    ``mod_count`` integer. Pass ``?include=mods`` to get the old full body back.
+    ``get_server`` is deliberately left untouched -- fetching one server is when
+    a caller wants its whole mod list.
+    """
     server = await _load(session, server_id)
     patch = body.model_dump(exclude_unset=True)
     mods = patch.pop("mods", None)
@@ -264,7 +277,13 @@ async def update_server(
     if mods is not None:
         await _apply_mods(session, server, body.mods)
     await session.commit()
-    return await _load(session, server_id)
+    server = await _load(session, server_id)
+    wanted = {part.strip() for part in include.split(",")} if include else set()
+    if "mods" in wanted:
+        return server
+    data = ServerOut.model_validate(server).model_dump(mode="json", exclude={"mods"})
+    data["mod_count"] = len(server.mods)
+    return JSONResponse(content=data)
 
 
 @router.delete("/{server_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=authed)
@@ -589,18 +608,23 @@ async def get_log(
         lines, extra = tail_log_lines(server_id, tail, severity=severity, hide_spam=hide_spam), {}
     else:
         lines, extra = iter_log_lines(server_id, severity=severity, hide_spam=hide_spam), {}
-    return {"server_id": server_id, "lines": [asdict(line) for line in lines], **extra}
+    return {"server_id": server_id, "lines": [asdict(line) for line in lines], "source": log.source, **extra}
 
 
 @router.post("/{server_id}/start", dependencies=authed)
 async def start_server(server_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     await _load(session, server_id)  # 404 check
     try:
-        return await supervisor.start(server_id)
+        result = await supervisor.start(server_id)
     except SingleServerError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except (SupervisorError, LookupError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    report = await preflight(session, server_id)
+    result["preflight_blocked"] = [
+        check.as_dict() for check in report.checks if check.level == "blocked"
+    ]
+    return result
 
 
 @router.post("/{server_id}/stop", dependencies=authed)

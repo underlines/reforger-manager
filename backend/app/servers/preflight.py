@@ -16,8 +16,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
-from ..models import ENGINE_SINGLETON_ID, Engine, Mod, Server, ServerMod
+from ..models import ENGINE_SINGLETON_ID, Engine, Mod, ModScenario, Server, ServerMod
 from ..mods import ModNotFound, WorkshopError, is_stale, resolve_dependencies, workshop
+from ..mods.resolve import ENGINE_BUILTIN_GUIDS
 from . import diagnosis
 
 
@@ -108,6 +109,11 @@ async def preflight(session: AsyncSession, server_id: int) -> PreflightReport:
     version_unknown = False
 
     for guid, node in nodes.items():
+        if guid in ENGINE_BUILTIN_GUIDS:
+            # Not a Workshop mod: the base-game data package / core package are
+            # always present and never downloadable. No lookup, no check, no
+            # resolved_mods entry.
+            continue
         mod = library_mods.get(guid)
         assignment = server_pins.get(guid)
         pin = assignment if assignment and assignment.pinned_version else mod
@@ -211,6 +217,15 @@ async def preflight(session: AsyncSession, server_id: int) -> PreflightReport:
             ))
         resolved_mods.append(detail)
 
+    scenario_rows = (
+        await session.execute(
+            select(ModScenario).where(ModScenario.mod_guid.in_(roots))
+        )
+    ).scalars().all()
+    scenario_check = _scenario_check(server.scenario_game_id, scenario_rows)
+    if scenario_check is not None:
+        checks.append(scenario_check)
+
     if version_unknown:
         checks.append(PreflightCheck(
             "Engine compatibility", "warn",
@@ -257,6 +272,45 @@ def _newest_log_addon_guids(server_id: int) -> list[str]:
     except OSError:
         return []
     return list(dict.fromkeys(_GUID_RE.findall(text)))
+
+
+def _scenario_check(scenario_game_id: str | None, rows) -> PreflightCheck | None:
+    """Validate a configured scenario id against the enabled mods' scenarios.
+
+    Always ``warn``: an id the manager cannot verify usually just means an
+    un-enriched library, not a broken server. At most one check is returned.
+    """
+    if not scenario_game_id:
+        return None
+    exact = [row for row in rows if row.game_id == scenario_game_id]
+    if any(row.name is not None for row in exact):
+        return None
+    if exact:
+        return PreflightCheck(
+            "Scenario", "warn",
+            f"Server's scenario id {scenario_game_id} came from a local mod scan, not the Workshop, and may use the mod's GUID instead of the scenario's own resource GUID.",
+            "Run a mod sync to verify it.",
+        )
+    wanted_path = _scenario_path(scenario_game_id)
+    alike = [
+        row for row in rows
+        if row.name is not None and row.game_id and _scenario_path(row.game_id) == wanted_path
+    ]
+    if len(alike) == 1:
+        return PreflightCheck(
+            "Scenario", "warn",
+            f"Server is set to {scenario_game_id}; the Workshop lists that mission as {alike[0].game_id}.",
+            "Update the server's scenario id to the Workshop-verified value.",
+        )
+    return PreflightCheck(
+        "Scenario", "warn",
+        f"Server's scenario id {scenario_game_id} was not found among the enabled mods' scenarios; its mod may be disabled or absent from this server.",
+    )
+
+
+def _scenario_path(game_id: str) -> str:
+    """Everything after the first ``}`` in a ``{GUID}path`` scenario id."""
+    return game_id.split("}", 1)[1] if "}" in game_id else game_id
 
 
 def _availability_detail(guid: str, server_id: int) -> str:
@@ -324,9 +378,10 @@ def _version_compat(declared: str, installed: str) -> str:
 
     Reforger runs addons built for slightly older engine versions (verified: the
     old stack ran 1.7.0.54 addons on the 1.8.0.10 engine), so strict equality is
-    wrong. We block only when the addon needs a *newer* engine than we have, or
-    when it is old enough that its Enfusion/script surface likely broke (e.g.
-    Ronin AI's 1.2.1.173 against 1.8.0.10 fails to compile).
+    wrong. We block only when the addon needs a *newer* engine than we have — a
+    declared version is a built-against marker, not a compat gate, so an addon
+    declaring an *older* version (even by major, or several minors) only warns:
+    it almost always still runs, but verify against a live start.
     """
     d = _parse_version(declared)
     i = _parse_version(installed)
@@ -335,7 +390,7 @@ def _version_compat(declared: str, installed: str) -> str:
     if d > i:
         return "blocked"  # addon needs a newer engine than we have
     if d[0] != i[0] or (i[1] - d[1]) >= 3:
-        return "blocked"  # different major or several minors behind -> broken surface
+        return "warn"  # different major or several minors behind -> usually still runs, verify live
     if d != i:
         return "warn"  # one or two minors behind: usually runs, verify live
     return "ok"

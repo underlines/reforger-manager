@@ -17,6 +17,8 @@ from typing import Iterator, Literal
 from ..core.app_settings import get_spam_patterns
 from ..core.config import settings
 
+LogFileSource = Literal["session", "aggregate"]
+
 Severity = Literal["debug", "info", "warning", "error"]
 
 DEFAULT_SEARCH_MAX_BYTES = 5 * 1024 * 1024
@@ -46,13 +48,20 @@ _SEVERITY_RE = re.compile(r"\(([DIWE])\)\s*:", re.IGNORECASE)
 
 @dataclass(frozen=True)
 class LogFile:
-    """Resolved console-log metadata; ``exists`` is false for a missing log."""
+    """Resolved console-log metadata; ``exists`` is false for a missing log.
+
+    ``source`` records which file was chosen: ``"session"`` is the engine's
+    per-run ``logs/logs_<timestamp>/console.log``; ``"aggregate"`` is the
+    supervisor's rolling ``logs/console.log`` capture, used only as a
+    fallback when no session directory exists at all.
+    """
 
     server_id: int
     path: Path
     exists: bool
     size: int = 0
     modified_at: datetime | None = None
+    source: LogFileSource = "aggregate"
 
 
 @dataclass(frozen=True)
@@ -96,40 +105,78 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
     return True
 
 
+def _newest_session_dir(logs_dir: Path) -> Path | None:
+    """Return the newest ``logs_*`` session directory under ``logs_dir``.
+
+    Ordering is by directory mtime. Entries that vanish mid-scan or are not
+    directories (e.g. a stray ``logs_``-prefixed file) are ignored.
+    """
+    best: tuple[float, Path] | None = None
+    try:
+        entries = list(logs_dir.glob("logs_*"))
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            if not entry.is_dir():
+                continue
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        if best is None or mtime > best[0]:
+            best = (mtime, entry)
+    return best[1] if best else None
+
+
 def current_log(server_id: int) -> LogFile:
     """Return metadata for the current server console log without creating it.
 
-    The fixed ``logs/console.log`` path is resolved and required to remain under
-    the server's log directory, preventing a malicious symlink from exposing an
+    The engine writes its authoritative per-run log to
+    ``logs/logs_<UTC timestamp>/console.log``; the newest session directory by
+    mtime wins and, once any session directory exists, is the only file read —
+    the supervisor's aggregate ``logs/console.log`` capture is only a fallback
+    for a profile that has never run a session, and the two are never merged.
+    Every resolved path is required to remain under the server's log directory
+    and profile directory, preventing a malicious symlink from exposing an
     arbitrary host file through a later API download endpoint.
     """
     server_id = _normalise_server_id(server_id)
     profiles_root = Path(settings.profiles_dir).resolve(strict=False)
     profile_dir = settings.profile_dir(server_id)
     resolved_profile_dir = profile_dir.resolve(strict=False)
+    if not _is_relative_to(resolved_profile_dir, profiles_root):
+        return LogFile(server_id=server_id, path=profile_dir / "logs" / "console.log", exists=False)
+
     logs_dir = profile_dir / "logs"
+    session_dir = _newest_session_dir(logs_dir)
+    if session_dir is not None:
+        source: LogFileSource = "session"
+        candidate = session_dir / "console.log"
+    else:
+        source = "aggregate"
+        candidate = logs_dir / "console.log"
+
     resolved_logs_dir = logs_dir.resolve(strict=False)
-    candidate = logs_dir / "console.log"
     resolved_candidate = candidate.resolve(strict=False)
     if (
-        not _is_relative_to(resolved_profile_dir, profiles_root)
-        or not _is_relative_to(resolved_logs_dir, resolved_profile_dir)
+        not _is_relative_to(resolved_logs_dir, resolved_profile_dir)
         or not _is_relative_to(resolved_candidate, resolved_logs_dir)
     ):
-        return LogFile(server_id=server_id, path=candidate, exists=False)
+        return LogFile(server_id=server_id, path=candidate, exists=False, source=source)
 
     try:
         stat = resolved_candidate.stat()
     except OSError:
-        return LogFile(server_id=server_id, path=resolved_candidate, exists=False)
+        return LogFile(server_id=server_id, path=resolved_candidate, exists=False, source=source)
     if not resolved_candidate.is_file():
-        return LogFile(server_id=server_id, path=resolved_candidate, exists=False)
+        return LogFile(server_id=server_id, path=resolved_candidate, exists=False, source=source)
     return LogFile(
         server_id=server_id,
         path=resolved_candidate,
         exists=True,
         size=stat.st_size,
         modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+        source=source,
     )
 
 

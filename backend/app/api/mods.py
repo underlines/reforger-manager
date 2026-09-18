@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import re
 import shutil
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -47,6 +49,7 @@ from ..mods.workshop import ModNotFound, WorkshopError, workshop
 from ..schemas.job import JobEnqueuedOut
 from ..schemas.mod import (
     ModAddIn,
+    ModBatchDownloadIn,
     ModDetailOut,
     ModDownloadIn,
     ModGraphNodeOut,
@@ -98,6 +101,18 @@ def _to_out(
     out.stale_pin = _stale_pin(mod, engine_build)
     out.required_by = required_by or []
     return out
+
+
+def _compact_dump(mod: ModOut) -> dict:
+    """Drop the bulky fields from one listing row (``?compact=true``).
+
+    ``required_by`` (a dependency scan per mod) and ``thumbnail`` are the bulk;
+    ``versions`` is not on ``ModOut`` today but is popped defensively so a future
+    widening cannot silently re-inflate the listing.
+    """
+    data = mod.model_dump(mode="json", exclude={"required_by", "thumbnail"})
+    data.pop("versions", None)
+    return data
 
 
 async def _reverse_dependents(session: AsyncSession) -> dict[str, list[ModRefOut]]:
@@ -189,8 +204,9 @@ async def list_mods(
     update: bool | None = Query(default=None),
     state: str | None = Query(default=None),
     refs: bool = Query(default=False),
+    compact: Annotated[bool, Query()] = False,
     session: AsyncSession = Depends(get_session),
-) -> list[ModOut]:
+) -> list[ModOut] | JSONResponse:
     stmt = select(Mod).order_by(Mod.name.is_(None), Mod.name, Mod.guid)
     if local is not None:
         stmt = stmt.where(Mod.is_local.is_(local))
@@ -228,6 +244,8 @@ async def list_mods(
             else:
                 item.kept_by = None
 
+    if compact:
+        return JSONResponse(content=[_compact_dump(item) for item in out])
     return out
 
 
@@ -359,24 +377,46 @@ async def unpin_library_mod(
     return _to_out(mod, await _engine_build(session))
 
 
+async def _enqueue_mod_download(
+    session: AsyncSession, guids: list[str], versions: dict[str, str] | None = None
+) -> JobEnqueuedOut:
+    """Shared batch-download path (S5): free-space guard over every requested
+    mod, then **one** ``mod_download`` job for the whole list — one job, one
+    engine spawn, regardless of how many GUIDs are requested."""
+    upper_guids = [g.upper() for g in guids]
+    mods: list[Mod] = []
+    for guid in upper_guids:
+        mod = await session.get(Mod, guid)
+        if mod is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"mod not found: {guid}")
+        mods.append(mod)
+    await ensure_sizes(session, mods)
+    projected, _unknown = estimate_download_bytes(mods)
+    check_free_space(settings.mods_dir, projected)
+    job_id = await job_manager.enqueue(
+        MOD_DOWNLOAD_JOB_KIND, params={"guids": upper_guids, "versions": versions or {}}
+    )
+    return JobEnqueuedOut(job_id=job_id, kind=MOD_DOWNLOAD_JOB_KIND)
+
+
+@router.post("/download", response_model=JobEnqueuedOut, status_code=status.HTTP_202_ACCEPTED)
+async def download_mods(
+    body: ModBatchDownloadIn, session: AsyncSession = Depends(get_session)
+) -> JobEnqueuedOut:
+    """Force a (re)download of N mods in one job (S5). Same free-space guard
+    and job kind as the single-GUID route, applied to the whole batch."""
+    return await _enqueue_mod_download(session, body.guids, body.versions)
+
+
 @router.post("/{guid}/download", response_model=JobEnqueuedOut, status_code=status.HTTP_202_ACCEPTED)
 async def download_mod(
     guid: str, body: ModDownloadIn | None = None, session: AsyncSession = Depends(get_session)
 ) -> JobEnqueuedOut:
-    """Force a (re)download of one mod. Enqueues the registered ``mod_download``
-    job (fact #6) after the free-space guard (S11)."""
+    """Force a (re)download of one mod. Thin wrapper over the batch path (S5):
+    delegates to ``_enqueue_mod_download`` with a single-element GUID list."""
     guid = guid.upper()
-    mod = await session.get(Mod, guid)
-    if mod is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "mod not found")
-    await ensure_sizes(session, [mod])
-    projected, _unknown = estimate_download_bytes([mod])
-    check_free_space(settings.mods_dir, projected)
-    versions = {guid: body.version} if body and body.version else {}
-    job_id = await job_manager.enqueue(
-        MOD_DOWNLOAD_JOB_KIND, params={"guids": [guid], "versions": versions}
-    )
-    return JobEnqueuedOut(job_id=job_id, kind=MOD_DOWNLOAD_JOB_KIND)
+    versions = {guid: body.version} if body and body.version else None
+    return await _enqueue_mod_download(session, [guid], versions)
 
 
 @router.delete("/{guid}/local", response_model=ModOut)

@@ -134,6 +134,11 @@ class ModDownloadIn(BaseModel):
     version: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class ModBatchDownloadIn(BaseModel):
+    guids: list[str] = Field(min_length=1)
+    versions: dict[str, str] | None = None
+
+
 class ModReferencesOut(BaseModel):
     servers: list[str]
     modpacks: list[str]

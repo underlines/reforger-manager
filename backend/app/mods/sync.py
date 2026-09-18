@@ -21,6 +21,10 @@ Three passes:
 3. **Prune local flag.** ``mods`` rows whose guid was not in this scan get
    ``is_local = False`` — never deleted (a server definition or a URL-added mod
    may still reference them).
+
+Between passes 2 and 3, a read-only warning pass logs any server definition
+whose ``scenario_game_id`` disagrees with the Workshop-verified scenario
+library (it never rewrites the server).
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.db import SessionLocal
 from ..core.jobs import JobContext
-from ..models import Mod, ModDependency, ModScenario
+from ..models import Mod, ModDependency, ModScenario, Server
 from ..models.base import ApiState, _utcnow
 from .scanner import ScannedMod, scan_all
 from .workshop import ModNotFound, WorkshopClient, WorkshopError, workshop
@@ -99,18 +103,29 @@ async def _upsert_local(session: AsyncSession, sm: ScannedMod) -> None:
     # game_id string equality -- that's the only thing the offline guess and
     # the real API-sourced game_id are guaranteed to share.
     enriched_paths: set[str] = set()
-    offline_only_rows: list[ModScenario] = []
+    offline_only_by_game_id: dict[str, ModScenario] = {}
     for srow in existing_scenarios:
         if srow.name is not None or srow.game_mode is not None:
             enriched_paths.add(srow.game_id.partition("}")[2] or srow.game_id)
         else:
-            offline_only_rows.append(srow)
+            offline_only_by_game_id[srow.game_id] = srow
 
-    for srow in offline_only_rows:
-        await session.delete(srow)
+    fresh_game_ids = {
+        game_id for game_id, path in sm.scenarios if path not in enriched_paths
+    }
+    # Drop stale offline-only rows the fresh scan no longer produces. A row
+    # whose game_id the fresh scan *does* still produce is left alone --
+    # deleting and re-adding it with an unchanged game_id would collide with
+    # itself on the unique (mod_guid, game_id) constraint, since a flush
+    # applies pending inserts before pending deletes.
+    for game_id, srow in offline_only_by_game_id.items():
+        if game_id not in fresh_game_ids:
+            await session.delete(srow)
     for game_id, path in sm.scenarios:
         if path in enriched_paths:
             continue  # already have real, API-sourced data for this scenario
+        if game_id in offline_only_by_game_id:
+            continue  # unchanged since the last scan
         session.add(ModScenario(mod_guid=sm.guid, game_id=game_id))
 
 
@@ -313,6 +328,63 @@ async def _upsert_api_dependencies(
     # gproj-only edges (in `existing`, not in the API set) are left as-is.
 
 
+# ------------------------------------------------- scenario repair warning
+def _scenario_path(game_id: str) -> str:
+    """Everything after the first ``}`` in a ``{GUID}path`` scenario id."""
+    return game_id.split("}", 1)[1] if "}" in game_id else game_id
+
+
+async def _log_scenario_discrepancies(session: AsyncSession) -> None:
+    """Log-only pass: warn when a server's ``scenario_game_id`` looks stale.
+
+    The offline scanner guesses scenario ids (``"{mod_guid}" + path``), and the
+    Workshop's real per-scenario resource guid need not match -- see the
+    WCS_Everon incident. After enrichment, every ``ModScenario`` row with a
+    ``name`` is Workshop-verified; when exactly one verified row shares a
+    server's configured id's path portion, that is almost certainly the id the
+    Workshop actually lists for that mission, so the mismatch is worth a
+    warning. Zero or multiple candidates are silently skipped -- never guess.
+    This pass is strictly read-only: it must never rewrite
+    ``Server.scenario_game_id`` -- silently changing which mission a server
+    boots is exactly the bug class it exists to prevent.
+    """
+    servers = (
+        await session.execute(
+            select(Server.id, Server.name, Server.scenario_game_id).where(
+                Server.scenario_game_id.is_not(None),
+                Server.scenario_game_id != "",
+            )
+        )
+    ).all()
+    verified = (
+        await session.execute(
+            select(ModScenario.game_id).where(ModScenario.name.is_not(None))
+        )
+    ).scalars().all()
+
+    verified_ids = set(verified)
+    by_path: dict[str, list[str]] = {}
+    for game_id in verified:
+        by_path.setdefault(_scenario_path(game_id), []).append(game_id)
+
+    for server_id, server_name, configured in servers:
+        if configured in verified_ids:
+            continue  # already correct -- no discrepancy
+        candidates = by_path.get(_scenario_path(configured), [])
+        if len(candidates) != 1:
+            continue  # zero or ambiguous -- never guess
+        label = (
+            f"server {server_id} ({server_name!r})" if server_name else f"server {server_id}"
+        )
+        logger.warning(
+            "%s: configured scenario id %s matches no Workshop-verified "
+            "scenario; the Workshop lists %s for this mission path",
+            label,
+            configured,
+            candidates[0],
+        )
+
+
 # --------------------------------------------------------------- job body
 async def refresh_local_mods(guids: list[str]) -> list[str]:
     """Re-scan the addon cache and upsert just the rows for ``guids``.
@@ -379,6 +451,10 @@ async def run_mod_sync(ctx: JobContext) -> dict:
             stats["errors"] += 1
             logger.exception("enrich failed for %s", sm.guid)
             await ctx.log(f"{sm.name or sm.guid}: enrich error: {type(exc).__name__}: {exc}")
+
+    # --- pass 2b: log scenario-id discrepancies (read-only warning) ---
+    async with SessionLocal() as session:
+        await _log_scenario_discrepancies(session)
 
     # --- pass 3: prune the is_local flag ---
     async with SessionLocal() as session:
