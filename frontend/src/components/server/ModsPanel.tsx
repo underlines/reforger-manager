@@ -3,18 +3,19 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Empty } from "../Empty";
 import { SortableModList, type SortableRow } from "../mods/SortableModList";
+import { ModTree } from "../mods/ModTree";
+import { ModLibraryPicker } from "../mods/ModLibraryPicker";
 import { Badge, Button, Dialog, Input } from "../ui";
 import {
   api,
   ApiError,
   type DetailServer,
-  type Mod,
   type Modpack,
   type Preflight,
   type Server,
   type ServerMod,
 } from "../../lib/api";
-import { useModCoverage, type ModDeps } from "../../lib/modCoverage";
+import { useModGraph, coverageFromGraph, buildNested, type ModGraph } from "../../lib/modGraph";
 
 /* ------------------------------------------------------------------ *
  * Local working copy of a server's mod set. Every edit on this tab
@@ -64,18 +65,6 @@ function packPinsNote(result: FromServerResult): string | null {
   }
   return null;
 }
-
-const formatSize = (bytes: number | null) => {
-  if (bytes === null || bytes === undefined) return "size unknown";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
-};
 
 const errText = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
@@ -238,7 +227,7 @@ export function ModsPanel({
 
   // Dependencies are resolved into the generated config at start time
   // (config_gen closure) — the assigned list holds only explicit picks.
-  const addMod = (mod: Mod) => {
+  const addMod = (mod: { guid: string; name: string | null }) => {
     setWorking((current) => {
       const present = new Set(current.map((row) => row.mod_guid));
       return present.has(mod.guid)
@@ -261,7 +250,11 @@ export function ModsPanel({
    * once no covering parent remains.
    * ------------------------------------------------------------------------- */
 
-  const { coverageByParent, covered } = useModCoverage(working);
+  const graphQuery = useModGraph();
+  const { coverageByParent, covered } = coverageFromGraph(
+    working.map((mod) => mod.mod_guid),
+    graphQuery.data,
+  );
 
   // Only uncovered rows reach the sortable list; DnD / save still act on the
   // full `working` array (see `reorderVisible`).
@@ -290,6 +283,10 @@ export function ModsPanel({
       else next.add(guid);
       return next;
     });
+
+  // Assigned-mods view: Flat is the existing drag/pin/enable list; Nested is a
+  // new read-only dependency-tree view with no editing controls.
+  const [viewMode, setViewMode] = useState<"flat" | "nested">("flat");
 
   /* ------------------------------ save ------------------------------ */
 
@@ -375,37 +372,6 @@ export function ModsPanel({
       reason: pinReason.trim(),
     });
   };
-
-  /* ---------------------------- add mods ---------------------------- */
-
-  const [showNonLocal, setShowNonLocal] = useState(false);
-  const [modSearch, setModSearch] = useState("");
-  const library = useQuery({
-    queryKey: ["mods", "library", showNonLocal],
-    queryFn: () => api<Mod[]>(`/api/mods${showNonLocal ? "" : "?local=true"}`),
-  });
-
-  const candidates = useMemo(() => {
-    const query = modSearch.trim().toLowerCase();
-    return (library.data ?? [])
-      .filter((mod) => !workingGuids.has(mod.guid))
-      .filter(
-        (mod) =>
-          !query ||
-          (mod.name ?? "").toLowerCase().includes(query) ||
-          mod.guid.toLowerCase().includes(query),
-      )
-      .slice(0, 60);
-  }, [library.data, workingGuids, modSearch]);
-
-  // Library picker pagination: 10 rows per page, back to page 1 whenever the
-  // filter or the non-local toggle changes. pageIndex clamps so a shrinking
-  // candidate list (e.g. after adding the last row on a page) can't leave an
-  // empty slice on screen.
-  const [page, setPage] = useState(0);
-  useEffect(() => setPage(0), [modSearch, showNonLocal]);
-  const pageCount = Math.max(1, Math.ceil(candidates.length / 10));
-  const pageIndex = Math.min(page, pageCount - 1);
 
   /* ----------------------- save mod set as a pack ----------------------- */
 
@@ -635,7 +601,23 @@ export function ModsPanel({
 
       <section className="grid gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="metric-label">Assigned mods ({working.length})</p>
+          <div className="flex items-center gap-2">
+            <p className="metric-label">Assigned mods ({working.length})</p>
+            <Button
+              size="sm"
+              variant={viewMode === "flat" ? "default" : "outline"}
+              onClick={() => setViewMode("flat")}
+            >
+              Flat
+            </Button>
+            <Button
+              size="sm"
+              variant={viewMode === "nested" ? "default" : "outline"}
+              onClick={() => setViewMode("nested")}
+            >
+              Nested
+            </Button>
+          </div>
           <div className="flex items-center gap-2">
             {dirty && <Badge tone="warn">Unsaved changes</Badge>}
             <Button
@@ -668,6 +650,22 @@ export function ModsPanel({
         )}
 
         {working.length ? (
+          viewMode === "nested" ? (
+            <>
+              <ModTree
+                graph={graphQuery.data ?? { nodes: [], edges: [] }}
+                mode="nested"
+                nested={buildNested(
+                  working.map((mod) => mod.mod_guid),
+                  graphQuery.data ?? { nodes: [], edges: [] },
+                )}
+                linkTo={(guid) => `/mods/${guid}`}
+              />
+              <p className="text-[10px] text-stone-500">
+                Switch to Flat to reorder, enable/disable, or edit pins.
+              </p>
+            </>
+          ) : (
           <SortableModList
             items={topLevel}
             onReorder={reorderVisible}
@@ -745,8 +743,8 @@ export function ModsPanel({
                 <AssignedModExpanded
                   parent={mod}
                   working={working}
+                  graph={graphQuery.data ?? { nodes: [], edges: [] }}
                   coverageGuids={coverageByParent.get(mod.mod_guid) ?? EMPTY_GUIDS}
-                  explicitGuids={workingGuids}
                   persistedGuids={persistedGuids}
                   pinBusy={pinBusy}
                   onSetEnabled={setEnabled}
@@ -756,76 +754,26 @@ export function ModsPanel({
               ) : null
             }
           />
+          )
         ) : (
           <Empty label="No mods assigned to this definition." />
         )}
-        <p className="text-[10px] text-stone-500">
-          Drag the handle to reorder — load order is significant. Pin / unpin apply
-          immediately; other edits are staged until you save.
-        </p>
+        {viewMode === "flat" && (
+          <p className="text-[10px] text-stone-500">
+            Drag the handle to reorder — load order is significant. Pin / unpin apply
+            immediately; other edits are staged until you save.
+          </p>
+        )}
       </section>
 
       <section className="grid gap-3">
         <p className="metric-label">Add mods from the library</p>
-        <div className="flex flex-wrap items-center gap-3">
-          <Input
-            className="h-9 max-w-xs"
-            value={modSearch}
-            onChange={(event) => setModSearch(event.target.value)}
-            placeholder="Filter library by name or GUID..."
-          />
-          <label className="flex items-center gap-2 text-xs text-stone-300">
-            <input
-              type="checkbox"
-              checked={showNonLocal}
-              onChange={(event) => setShowNonLocal(event.target.checked)}
-            />
-            Include not-local mods
-          </label>
-        </div>
-
-        {library.isLoading ? (
-          <p className="text-xs text-stone-400">Loading library...</p>
-        ) : library.isError ? (
-          <p className="error">{errText(library.error, "Library could not be loaded.")}</p>
-        ) : candidates.length ? (
-          <>
-            <ul className="divide-y divide-stone-800 border border-stone-800">
-              {candidates.slice(pageIndex * 10, pageIndex * 10 + 10).map((mod) => (
-                <AddModRow
-                  key={mod.guid}
-                  mod={mod}
-                  existingGuids={workingGuids}
-                  onAdd={() => void addMod(mod)}
-                />
-              ))}
-            </ul>
-            <div className="flex items-center justify-between gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pageIndex === 0}
-                onClick={() => setPage(pageIndex - 1)}
-              >
-                Prev
-              </Button>
-              <span className="text-xs text-stone-400">
-                {pageIndex * 10 + 1}-{Math.min((pageIndex + 1) * 10, candidates.length)} of{" "}
-                {candidates.length}
-              </span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pageIndex + 1 >= pageCount}
-                onClick={() => setPage(pageIndex + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </>
-        ) : (
-          <Empty label="No library mods match — every candidate is already assigned or filtered out." />
-        )}
+        <ModLibraryPicker
+          disabledGuids={new Set([...workingGuids, ...covered])}
+          onAdd={(mod) => addMod(mod)}
+          showDepsPreview
+          pageSize={10}
+        />
       </section>
 
       <Dialog
@@ -1030,82 +978,15 @@ export function ModsPanel({
   );
 }
 
-function AddModRow({
-  mod,
-  existingGuids,
-  onAdd,
-}: {
-  mod: Mod;
-  existingGuids: Set<string>;
-  onAdd: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const detail = useQuery({
-    queryKey: ["mod", mod.guid, "deps"],
-    queryFn: () => api<ModDeps>(`/api/mods/${mod.guid}`),
-    enabled: open,
-  });
-
-  const additions = useMemo(() => {
-    const nodes = detail.data?.dependency_tree?.nodes ?? [];
-    return nodes.filter((node) => node.guid !== mod.guid && !existingGuids.has(node.guid));
-  }, [detail.data, mod.guid, existingGuids]);
-
-  return (
-    <li className="grid gap-2 px-3 py-2">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="min-w-0 flex-1">
-          <span className="block truncate font-display text-sm uppercase tracking-wide text-stone-100">
-            {mod.name ?? mod.guid}
-          </span>
-          <span className="flex flex-wrap gap-x-3 text-[10px] text-stone-500">
-            <span className="font-mono">{mod.guid}</span>
-            <span>{formatSize(mod.size)}</span>
-            {!mod.is_local && <span className="text-amber-400">not local</span>}
-          </span>
-        </span>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-        >
-          {open ? "Hide deps" : "Deps"}
-        </Button>
-        <Button size="sm" onClick={onAdd}>
-          Add
-        </Button>
-      </div>
-      {open && (
-        <div className="text-[11px] text-stone-400">
-          {detail.isLoading ? (
-            "Resolving dependencies..."
-          ) : detail.isError ? (
-            <span className="error">Could not resolve dependencies.</span>
-          ) : additions.length ? (
-            <span>
-              Brings {additions.length} dependency{additions.length === 1 ? "" : "ies"} not yet in
-              the set: {additions.map((node) => node.name ?? node.guid).join(", ")}
-            </span>
-          ) : (
-            "No new dependencies — everything it needs is already assigned."
-          )}
-        </div>
-      )}
-    </li>
-  );
-}
-
 /* Expanded subtree under one assigned pick: its resolved dependency closure
- * (read-only links) plus any OTHER explicit picks it covers, rendered with their
- * own enable / pin controls so a covered pick keeps every control it had at the
- * top level. Shares the ["mod", guid, "deps"] cache with AddModRow / the dedup
- * `useQueries` above. */
+ * (read-only, via ModTree) plus any OTHER explicit picks it covers, rendered
+ * with their own enable / pin controls so a covered pick keeps every control
+ * it had at the top level. */
 function AssignedModExpanded({
   parent,
   working,
+  graph,
   coverageGuids,
-  explicitGuids,
   persistedGuids,
   pinBusy,
   onSetEnabled,
@@ -1114,29 +995,18 @@ function AssignedModExpanded({
 }: {
   parent: WorkingMod;
   working: WorkingMod[];
+  graph: ModGraph;
   coverageGuids: ReadonlySet<string>;
-  explicitGuids: Set<string>;
   persistedGuids: Set<string>;
   pinBusy: boolean;
   onSetEnabled: (guid: string, enabled: boolean) => void;
   onOpenPin: (mod: WorkingMod) => void;
   onUnpin: (guid: string) => void;
 }) {
-  const deps = useQuery({
-    queryKey: ["mod", parent.mod_guid, "deps"],
-    queryFn: () => api<ModDeps>(`/api/mods/${parent.mod_guid}`),
-    staleTime: 60_000,
-  });
-
-  const nodes = deps.data?.dependency_tree?.nodes ?? [];
-  // Pure dependency nodes: depth > 0 and NOT themselves an explicit pick (those
-  // render below as pick-styled rows instead). Sorted by depth then name.
-  const pureNodes = [...nodes]
-    .filter((node) => node.depth > 0 && !explicitGuids.has(node.guid))
-    .sort(
-      (a, b) =>
-        a.depth - b.depth || (a.name ?? a.guid).localeCompare(b.name ?? b.guid),
-    );
+  // Pure dependency subtree: the parent's own children, excluding the parent
+  // node itself (buildNested([parent], graph) returns a single root, so only
+  // its children are the dependency closure).
+  const depTree = buildNested([parent.mod_guid], graph).flatMap((node) => node.children);
   const picks = working.filter((row) => coverageGuids.has(row.mod_guid));
 
   return (
@@ -1191,35 +1061,13 @@ function AssignedModExpanded({
         );
       })}
 
-      {deps.isLoading ? (
-        <p>...</p>
-      ) : deps.isError ? (
-        <p className="error">Dependency lookup failed.</p>
-      ) : pureNodes.length ? (
-        pureNodes.map((node) => (
-          <div
-            key={`${node.guid}-${node.depth}`}
-            className="flex flex-wrap items-center gap-2"
-          >
-            {node.state === "unresolved" ? (
-              <>
-                <span className="font-mono text-stone-500">{node.guid}</span>
-                <Badge tone="warn">unresolved</Badge>
-              </>
-            ) : (
-              <>
-                <Link
-                  to={`/mods/${node.guid}`}
-                  className="text-stone-300 hover:text-amber-400"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {node.name ?? node.guid}
-                </Link>
-                <span className="text-stone-500">via {node.via}</span>
-              </>
-            )}
-          </div>
-        ))
+      {depTree.length ? (
+        <ModTree
+          graph={graph}
+          mode="nested"
+          nested={depTree}
+          linkTo={(guid) => `/mods/${guid}`}
+        />
       ) : picks.length ? null : (
         <p>No dependencies.</p>
       )}

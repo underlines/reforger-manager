@@ -1,10 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { Empty } from "../components/Empty";
+import { FreshnessPill } from "../components/mods/FreshnessPill";
+import { ModTree } from "../components/mods/ModTree";
 import { PageHeading } from "../components/PageHeading";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
 import { api, apiVoid, ApiError } from "../lib/api";
+import {
+  buildNested,
+  freshnessOf,
+  useInvalidateGraphOnJob,
+  useModGraph,
+  type ModGraph,
+  type TreeNode,
+} from "../lib/modGraph";
 
 type ApiState = "ok" | "not_found" | "unchecked";
 type ModRecord = {
@@ -161,6 +171,31 @@ const COLUMNS: { col: SortCol; label: string }[] = [
   { col: "state", label: "State" },
 ];
 
+const EMPTY_GRAPH: ModGraph = { nodes: [], edges: [] };
+
+const treeMatchesFilter = (
+  node: TreeNode,
+  modByGuid: Map<string, ModRecord>,
+  passes: (m: ModRecord) => boolean,
+): boolean => {
+  const mod = modByGuid.get(node.guid);
+  // A node with no ModRecord (the synthesized engine-builtin node, or a
+  // genuinely unresolved/dangling dependency) isn't part of the filterable
+  // catalogue — the name/local/state/update filters don't apply to it, so it
+  // always passes rather than being treated as a non-match and pruned.
+  if (!mod || passes(mod)) return true;
+  return node.children.some((child) => treeMatchesFilter(child, modByGuid, passes));
+};
+
+const pruneNested = (
+  nodes: TreeNode[],
+  modByGuid: Map<string, ModRecord>,
+  passes: (m: ModRecord) => boolean,
+): TreeNode[] =>
+  nodes
+    .filter((node) => treeMatchesFilter(node, modByGuid, passes))
+    .map((node) => ({ ...node, children: pruneNested(node.children, modByGuid, passes) }));
+
 export function ModsPage() {
   const queryClient = useQueryClient();
   const addInputRef = useRef<HTMLInputElement>(null);
@@ -180,6 +215,10 @@ export function ModsPage() {
   const [diskTarget, setDiskTarget] = useState<ModRecord | null>(null);
   const [libraryTarget, setLibraryTarget] = useState<ModRecord | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"flat" | "nested">("flat");
+  const [scanJobId, setScanJobId] = useState<number | null>(null);
+  const [highlighted, setHighlighted] = useState<ReadonlySet<string>>(new Set());
+  const parentMapRef = useRef<Map<string, string | null> | null>(null);
 
   const filters = new URLSearchParams();
   if (search.trim()) filters.set("q", search.trim());
@@ -191,6 +230,9 @@ export function ModsPage() {
     queryKey: ["mods", filterString],
     queryFn: () => api<ModRecord[]>(`/api/mods${filterString ? `?${filterString}&refs=1` : "?refs=1"}`),
   });
+
+  const graphQuery = useModGraph();
+  useInvalidateGraphOnJob(scanJobId);
 
   const storageQuery = useQuery({
     queryKey: ["storage"],
@@ -221,6 +263,7 @@ export function ModsPage() {
     mutationFn: ({ path, body }: { path: string; body?: unknown }) => runJob(path, body),
     onSuccess: (job) => {
       setNotice(`${job.kind.replaceAll("_", " ")} queued as job #${job.job_id}.`);
+      if (job.kind === "mod_sync") setScanJobId(job.job_id);
       void invalidateMods();
     },
     onError: (error) => setNotice(errorMessage(error)),
@@ -345,6 +388,64 @@ export function ModsPage() {
     removeLocalMutation.isPending ||
     removeLibraryMutation.isPending;
   const rows = sortRows(modsQuery.data ?? [], sort);
+
+  const rootGuids = useMemo(
+    () => (modsQuery.data ?? []).filter((mod) => mod.is_local).map((mod) => mod.guid),
+    [modsQuery.data],
+  );
+  const modByGuid = useMemo(
+    () => new Map((modsQuery.data ?? []).map((mod): [string, ModRecord] => [mod.guid, mod])),
+    [modsQuery.data],
+  );
+  const nestedTree = useMemo(
+    () => buildNested(rootGuids, graphQuery.data ?? EMPTY_GRAPH),
+    [rootGuids, graphQuery.data],
+  );
+  const nestedFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const passes = (mod: ModRecord) => {
+      if (q && !(mod.name ?? mod.guid).toLowerCase().includes(q)) return false;
+      if (local === "true" && !mod.is_local) return false;
+      if (local === "false" && mod.is_local) return false;
+      if (state !== "all" && mod.api_state !== state) return false;
+      if (updatesOnly && !mod.has_update) return false;
+      return true;
+    };
+    return pruneNested(nestedTree, modByGuid, passes);
+  }, [nestedTree, modByGuid, search, local, state, updatesOnly]);
+
+  useEffect(() => {
+    if (!graphQuery.data) return;
+    const next = new Map<string, string | null>();
+    const walk = (nodes: TreeNode[], parent: string | null) => {
+      for (const treeNode of nodes) {
+        next.set(treeNode.guid, parent);
+        walk(treeNode.children, treeNode.guid);
+      }
+    };
+    walk(nestedTree, null);
+    const prev = parentMapRef.current;
+    parentMapRef.current = next;
+    if (prev === null) {
+      if (highlighted.size) setHighlighted(new Set());
+      return;
+    }
+    const changed: string[] = [];
+    for (const [guid, parent] of next) {
+      if (prev.get(guid) !== parent) changed.push(guid);
+    }
+    if (!changed.length) {
+      setHighlighted((prevHighlight) => (prevHighlight.size ? new Set() : prevHighlight));
+      return;
+    }
+    setHighlighted(new Set(changed));
+    const timer = window.setTimeout(() => setHighlighted(new Set()), 2000);
+    return () => window.clearTimeout(timer);
+  }, [graphQuery.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (graphQuery.dataUpdatedAt !== 0 && scanJobId !== null) setScanJobId(null);
+  }, [graphQuery.dataUpdatedAt]);
 
   const renderReferences = () => {
     if (!refTarget) return null;
@@ -477,6 +578,26 @@ export function ModsPage() {
             </label>
           </div>
           <div className="flex flex-wrap gap-2 border-t border-stone-800 pt-3">
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant={viewMode === "flat" ? "default" : "outline"}
+                onClick={() => setViewMode("flat")}
+              >
+                Flat
+              </Button>
+              <Button
+                size="sm"
+                variant={viewMode === "nested" ? "default" : "outline"}
+                onClick={() => setViewMode("nested")}
+              >
+                Nested
+              </Button>
+              <FreshnessPill
+                timestamp={freshnessOf(rootGuids, graphQuery.data ?? EMPTY_GRAPH)}
+                syncing={scanJobId !== null}
+              />
+            </div>
             <Button
               size="sm"
               variant="outline"
@@ -559,10 +680,12 @@ export function ModsPage() {
               </Button>
             </div>
           )}
-          {!modsQuery.isLoading && !modsQuery.isError && !rows.length && (
-            <Empty label="No mods match these filters. Scan the local cache to import installed addons." />
-          )}
-          {rows.length ? (
+          {!modsQuery.isLoading &&
+            !modsQuery.isError &&
+            (viewMode === "flat" ? !rows.length : !nestedFiltered.length) && (
+              <Empty label="No mods match these filters. Scan the local cache to import installed addons." />
+            )}
+          {viewMode === "flat" && rows.length ? (
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-stone-300">
                 <thead>
@@ -735,6 +858,19 @@ export function ModsPage() {
                 </tbody>
               </table>
             </div>
+          ) : null}
+          {viewMode === "nested" && !modsQuery.isLoading && !modsQuery.isError && nestedFiltered.length ? (
+            graphQuery.isLoading ? (
+              <p className="text-sm text-stone-400">Loading dependency graph...</p>
+            ) : (
+              <ModTree
+                graph={graphQuery.data ?? EMPTY_GRAPH}
+                mode="nested"
+                nested={nestedFiltered}
+                linkTo={(guid) => `/mods/${guid}`}
+                highlightGuids={highlighted}
+              />
+            )
           ) : null}
         </CardContent>
       </Card>

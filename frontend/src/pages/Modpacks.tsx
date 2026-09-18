@@ -3,10 +3,12 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { Empty } from "../components/Empty";
 import { PageHeading } from "../components/PageHeading";
+import { ModLibraryPicker } from "../components/mods/ModLibraryPicker";
+import { ModTree } from "../components/mods/ModTree";
 import { SortableModList } from "../components/mods/SortableModList";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
-import { api, ApiError, apiVoid, type Mod, type Modpack, type Server } from "../lib/api";
-import { useModCoverage, type ModDeps } from "../lib/modCoverage";
+import { api, ApiError, apiVoid, type Modpack, type Server } from "../lib/api";
+import { buildNested, coverageFromGraph, useModGraph, type ModGraph } from "../lib/modGraph";
 
 /* ------------------------------------------------------------------ *
  * A modpack item is only a GUID + a load order. `SortableModList` is
@@ -20,6 +22,9 @@ type EditorItem = { key: string; guid: string; name: string | null; mod_guid: st
 
 /** Stable empty set for rows that cover nothing (avoids a new Set() each render). */
 const EMPTY_GUIDS: ReadonlySet<string> = new Set<string>();
+
+/** Stable empty graph while the shared graph query is still loading. */
+const EMPTY_GRAPH: ModGraph = { nodes: [], edges: [] };
 
 type ExportShape = {
   name: string;
@@ -82,35 +87,15 @@ export function ModpacksPage() {
   const [description, setDescription] = useState("");
   const [items, setItems] = useState<EditorItem[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
-  const [showNonLocal, setShowNonLocal] = useState(false);
-  const [modSearch, setModSearch] = useState("");
-
-  const library = useQuery({
-    queryKey: ["mods", "library", showNonLocal],
-    queryFn: () => api<Mod[]>(`/api/mods${showNonLocal ? "" : "?local=true"}`),
-    enabled: editorOpen,
-  });
+  const [viewMode, setViewMode] = useState<"flat" | "nested">("flat");
 
   const itemGuids = useMemo(() => new Set(items.map((item) => item.mod_guid)), [items]);
-  const candidates = useMemo(() => {
-    const query = modSearch.trim().toLowerCase();
-    return (library.data ?? [])
-      .filter((mod) => !itemGuids.has(mod.guid))
-      .filter(
-        (mod) =>
-          !query ||
-          (mod.name ?? "").toLowerCase().includes(query) ||
-          mod.guid.toLowerCase().includes(query),
-      )
-      .slice(0, 60);
-  }, [library.data, itemGuids, modSearch]);
 
   const resetEditor = () => {
     setName("");
     setDescription("");
     setItems([]);
     setFormError(null);
-    setModSearch("");
   };
   const openCreate = () => {
     resetEditor();
@@ -123,7 +108,6 @@ export function ModpacksPage() {
     setDescription(pack.description ?? "");
     setItems(itemsFromPack(pack));
     setFormError(null);
-    setModSearch("");
     setEditorOpen(true);
   };
   const closeEditor = () => {
@@ -141,7 +125,7 @@ export function ModpacksPage() {
   // Add only the explicit pick, synchronously — dependencies render as derived
   // coverage under each parent's disclosure below. Nothing the user did not
   // pick is stored.
-  const addItem = (mod: Mod) => {
+  const addItem = (mod: { guid: string; name: string | null }) => {
     setItems((current) => {
       const present = new Set(current.map((item) => item.mod_guid));
       return present.has(mod.guid)
@@ -160,7 +144,12 @@ export function ModpacksPage() {
    * no covering parent remains.
    * ------------------------------------------------------------------------- */
 
-  const { coverageByParent, covered } = useModCoverage(items);
+  const graphQuery = useModGraph();
+  const graph = graphQuery.data ?? EMPTY_GRAPH;
+  const { coverageByParent, covered } = coverageFromGraph(
+    items.map((item) => item.mod_guid),
+    graphQuery.data,
+  );
 
   // Only uncovered picks reach the sortable list; drag / save still act on the
   // full `items` array (see `reorderVisible`).
@@ -386,99 +375,105 @@ export function ModpacksPage() {
               </div>
 
               <section className="grid gap-3">
-                <p className="metric-label">Pack contents ({items.length})</p>
-                {items.length ? (
-                  <SortableModList
-                    items={topLevel}
-                    onReorder={reorderVisible}
-                    renderActions={(item) => {
-                      const open = expandedRows.has(item.mod_guid);
-                      return (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            type="button"
-                            aria-expanded={open}
-                            aria-label={open ? "Hide dependencies" : "Show dependencies"}
-                            onClick={() => toggleExpanded(item.mod_guid)}
-                          >
-                            {open ? "▾" : "▸"}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            type="button"
-                            onClick={() => removeItem(item.mod_guid)}
-                          >
-                            Remove
-                          </Button>
-                        </>
-                      );
-                    }}
-                    renderExpanded={(item) =>
-                      expandedRows.has(item.mod_guid) ? (
-                        <PackItemExpanded
-                          parent={item}
-                          items={items}
-                          coverageGuids={coverageByParent.get(item.mod_guid) ?? EMPTY_GUIDS}
-                          onRemove={removeItem}
-                        />
-                      ) : null
-                    }
-                  />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="metric-label">Pack contents ({items.length})</p>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      type="button"
+                      variant={viewMode === "flat" ? "outline" : "ghost"}
+                      aria-pressed={viewMode === "flat"}
+                      onClick={() => setViewMode("flat")}
+                    >
+                      Flat
+                    </Button>
+                    <Button
+                      size="sm"
+                      type="button"
+                      variant={viewMode === "nested" ? "outline" : "ghost"}
+                      aria-pressed={viewMode === "nested"}
+                      onClick={() => setViewMode("nested")}
+                    >
+                      Nested
+                    </Button>
+                  </div>
+                </div>
+                {viewMode === "flat" ? (
+                  <>
+                    {items.length ? (
+                      <SortableModList
+                        items={topLevel}
+                        onReorder={reorderVisible}
+                        renderActions={(item) => {
+                          const open = expandedRows.has(item.mod_guid);
+                          return (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                type="button"
+                                aria-expanded={open}
+                                aria-label={open ? "Hide dependencies" : "Show dependencies"}
+                                onClick={() => toggleExpanded(item.mod_guid)}
+                              >
+                                {open ? "▾" : "▸"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                type="button"
+                                onClick={() => removeItem(item.mod_guid)}
+                              >
+                                Remove
+                              </Button>
+                            </>
+                          );
+                        }}
+                        renderExpanded={(item) =>
+                          expandedRows.has(item.mod_guid) ? (
+                            <PackItemExpanded
+                              parent={item}
+                              items={items}
+                              graph={graph}
+                              coverageGuids={coverageByParent.get(item.mod_guid) ?? EMPTY_GUIDS}
+                              onRemove={removeItem}
+                            />
+                          ) : null
+                        }
+                      />
+                    ) : (
+                      <Empty label="No mods in this pack yet — add some from the library below." />
+                    )}
+                    <p className="text-[10px] text-stone-500">
+                      Drag the handle to reorder — load order is significant.
+                    </p>
+                  </>
                 ) : (
-                  <Empty label="No mods in this pack yet — add some from the library below." />
+                  <>
+                    <ModTree
+                      graph={graph}
+                      mode="nested"
+                      nested={buildNested(
+                        items.map((item) => item.mod_guid),
+                        graph,
+                      )}
+                      linkTo={(guid) => `/mods/${guid}`}
+                    />
+                    <p className="text-[10px] text-stone-500">
+                      Switch to Flat to reorder or remove items.
+                    </p>
+                  </>
                 )}
-                <p className="text-[10px] text-stone-500">
-                  Drag the handle to reorder — load order is significant.
-                </p>
               </section>
 
               <section className="grid gap-3">
                 <p className="metric-label">Add mods from the library</p>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Input
-                    className="h-9 max-w-xs"
-                    value={modSearch}
-                    onChange={(event) => setModSearch(event.target.value)}
-                    placeholder="Filter library by name or GUID..."
-                  />
-                  <label className="flex items-center gap-2 text-xs text-stone-300">
-                    <input
-                      type="checkbox"
-                      checked={showNonLocal}
-                      onChange={(event) => setShowNonLocal(event.target.checked)}
-                    />
-                    Include not-local mods
-                  </label>
-                </div>
-                {library.isLoading ? (
-                  <p className="text-xs text-stone-400">Loading library...</p>
-                ) : library.isError ? (
-                  <p className="error">{errText(library.error, "Library could not be loaded.")}</p>
-                ) : candidates.length ? (
-                  <ul className="divide-y divide-stone-800 border border-stone-800">
-                    {candidates.map((mod) => (
-                      <li key={mod.guid} className="flex flex-wrap items-center gap-3 px-3 py-2">
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-display text-sm uppercase tracking-wide text-stone-100">
-                            {mod.name ?? mod.guid}
-                          </span>
-                          <span className="flex flex-wrap gap-x-3 text-[10px] text-stone-500">
-                            <span className="font-mono">{mod.guid}</span>
-                            {!mod.is_local && <span className="text-amber-400">not local</span>}
-                          </span>
-                        </span>
-                        <Button size="sm" type="button" onClick={() => addItem(mod)}>
-                          Add
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <Empty label="No library mods match — every candidate is already in the pack or filtered out." />
-                )}
+                <ModLibraryPicker
+                  disabledGuids={new Set([...itemGuids, ...covered])}
+                  onAdd={(mod) => addItem(mod)}
+                  showDepsPreview={false}
+                  pageSize={Infinity}
+                />
               </section>
 
               {formError && <p className="error">{formError}</p>}
@@ -733,35 +728,25 @@ export function ModpacksPage() {
 
 /* Expanded subtree under one pack pick: the OTHER explicit picks its dependency
  * closure covers (rendered with a Remove — the row is stored in the pack) plus
- * its pure dependency nodes (read-only links). Modeled on the Mods tab's
- * AssignedModExpanded, minus enable/pin controls — packs have neither. The deps
- * query shares the ["mod", guid, "deps"] cache with useModCoverage. */
+ * its dependency subtree (read-only links, sourced from the shared mod graph).
+ * Modeled on the Mods tab's AssignedModExpanded, minus enable/pin controls —
+ * packs have neither. */
 function PackItemExpanded({
   parent,
   items,
+  graph,
   coverageGuids,
   onRemove,
 }: {
   parent: EditorItem;
   items: EditorItem[];
+  graph: ModGraph;
   coverageGuids: ReadonlySet<string>;
   onRemove: (mod_guid: string) => void;
 }) {
-  const deps = useQuery({
-    queryKey: ["mod", parent.mod_guid, "deps"],
-    queryFn: () => api<ModDeps>(`/api/mods/${parent.mod_guid}`),
-    staleTime: 60_000,
-  });
-
-  // Pure dependency nodes: depth > 0 and NOT themselves a pack pick (those
-  // render above as pick-styled rows instead). Sorted by depth then name.
-  const packGuids = new Set(items.map((item) => item.mod_guid));
-  const pureNodes = [...(deps.data?.dependency_tree?.nodes ?? [])]
-    .filter((node) => node.depth > 0 && !packGuids.has(node.guid))
-    .sort(
-      (a, b) =>
-        a.depth - b.depth || (a.name ?? a.guid).localeCompare(b.name ?? b.guid),
-    );
+  // The parent guid itself is dropped so it isn't re-rendered inside its own
+  // expanded section — only its dependency subtree.
+  const dependencyNodes = buildNested([parent.mod_guid], graph).flatMap((node) => node.children);
   const picks = items.filter((row) => coverageGuids.has(row.mod_guid));
 
   return (
@@ -787,35 +772,13 @@ function PackItemExpanded({
         </div>
       ))}
 
-      {deps.isLoading ? (
-        <p>...</p>
-      ) : deps.isError ? (
-        <p className="error">Dependency lookup failed.</p>
-      ) : pureNodes.length ? (
-        pureNodes.map((node) => (
-          <div
-            key={`${node.guid}-${node.depth}`}
-            className="flex flex-wrap items-center gap-2"
-          >
-            {node.state === "unresolved" ? (
-              <>
-                <span className="font-mono text-stone-500">{node.guid}</span>
-                <Badge tone="warn">unresolved</Badge>
-              </>
-            ) : (
-              <>
-                <Link
-                  to={`/mods/${node.guid}`}
-                  className="text-stone-300 hover:text-amber-400"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {node.name ?? node.guid}
-                </Link>
-                <span className="text-stone-500">via {node.via}</span>
-              </>
-            )}
-          </div>
-        ))
+      {dependencyNodes.length ? (
+        <ModTree
+          graph={graph}
+          mode="nested"
+          nested={dependencyNodes}
+          linkTo={(guid) => `/mods/${guid}`}
+        />
       ) : picks.length ? null : (
         <p>No dependencies.</p>
       )}

@@ -35,7 +35,7 @@ from ..models import (
 from ..mods.downloader import MOD_DOWNLOAD_JOB_KIND
 from ..mods.freespace import check_free_space, ensure_sizes, estimate_download_bytes, guard_update_scope
 from ..mods.pinning import CurrentEngineBuildMissing, PinRecordNotFound, pin_mod, unpin_mod
-from ..mods.resolve import resolve_dependencies
+from ..mods.resolve import ENGINE_BUILTIN_GUIDS, resolve_dependencies
 from ..mods.scanner import addons_root, resolve_addon_dir
 from ..mods.sync import enrich_one
 from ..mods.updates import (
@@ -49,6 +49,8 @@ from ..schemas.mod import (
     ModAddIn,
     ModDetailOut,
     ModDownloadIn,
+    ModGraphNodeOut,
+    ModGraphOut,
     ModOut,
     ModPinIn,
     ModRefOut,
@@ -257,6 +259,57 @@ async def search_mods(
 
 # ------------------------------------------------------------- detail / deps
 # These static actions must precede /{guid} to avoid FastAPI path shadowing.
+_BUILTIN_NODE_NAMES = {
+    "58D0FB3206B6F859": "Arma Reforger (base data)",
+    "5614BBCCBB55ED1C": "Core",
+}
+
+
+@router.get("/graph", response_model=ModGraphOut)
+async def get_mods_graph(session: AsyncSession = Depends(get_session)) -> ModGraphOut:
+    """The entire mod library's dependency graph in one pair of queries — no
+    Workshop API calls, no BFS. Used by the frontend's whole-library graph view."""
+    mods = (await session.execute(select(Mod))).scalars().all()
+    nodes: dict[str, ModGraphNodeOut] = {
+        m.guid: ModGraphNodeOut(
+            guid=m.guid,
+            name=m.name,
+            is_local=m.is_local,
+            api_state=m.api_state.value if m.api_state else "unchecked",
+            is_unlisted=m.is_unlisted,
+            is_private=m.is_private,
+            is_obsolete=m.is_obsolete,
+            api_checked_at=m.api_checked_at,
+        )
+        for m in mods
+    }
+
+    dep_rows = (
+        await session.execute(
+            select(
+                ModDependency.mod_guid,
+                ModDependency.depends_on_guid,
+                ModDependency.depends_on_name,
+                ModDependency.source,
+            )
+        )
+    ).all()
+
+    edges: list[dict] = []
+    for mod_guid, dep_guid, dep_name, source in dep_rows:
+        edges.append({"from": mod_guid, "to": dep_guid, "source": source})
+        if dep_guid not in nodes and dep_guid in ENGINE_BUILTIN_GUIDS:
+            nodes[dep_guid] = ModGraphNodeOut(
+                guid=dep_guid,
+                name=dep_name or _BUILTIN_NODE_NAMES.get(dep_guid, dep_guid),
+                is_local=True,
+                api_state="ok",
+                is_builtin=True,
+            )
+
+    return ModGraphOut(nodes=list(nodes.values()), edges=edges)
+
+
 @router.post("/updates/check", response_model=JobEnqueuedOut, status_code=status.HTTP_202_ACCEPTED)
 async def check_all_updates() -> JobEnqueuedOut:
     job_id = await job_manager.enqueue(MOD_UPDATE_CHECK_JOB_KIND, params={"scope": "all"})

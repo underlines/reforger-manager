@@ -2,8 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeading } from "../components/PageHeading";
+import { ModTree } from "../components/mods/ModTree";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
 import { api, apiVoid, type Server } from "../lib/api";
+import { buildFlat, buildNested, buildReverse, useModGraph, type ModGraph } from "../lib/modGraph";
+
+const EMPTY_GRAPH: ModGraph = { nodes: [], edges: [] };
 
 type ModVersion = {
   version?: string | null;
@@ -74,9 +78,6 @@ const formatSize = (bytes: number | null) => {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 };
 
-const viaTone = (via: string) => (via === "api" ? "good" : via === "gproj" ? "neutral" : "warn");
-const stateTone = (state: string) => (state === "ok" ? "good" : state === "not_found" ? "bad" : "warn");
-
 export function ModDetailPage() {
   const { guid = "" } = useParams();
   const navigate = useNavigate();
@@ -86,6 +87,8 @@ export function ModDetailPage() {
   const [pinReason, setPinReason] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [requiresMode, setRequiresMode] = useState<"nested" | "flat">("nested");
+  const [requiredByMode, setRequiredByMode] = useState<"nested" | "flat">("flat");
 
   const invalidateMod = () => queryClient.invalidateQueries({ queryKey: ["mod", guid] });
 
@@ -94,6 +97,9 @@ export function ModDetailPage() {
     queryFn: () => api<ModDetail>(`/api/mods/${guid}`),
     enabled: guid.length > 0,
   });
+
+  const graphQuery = useModGraph();
+  const graph = graphQuery.data ?? EMPTY_GRAPH;
 
   const serversQuery = useQuery({
     queryKey: ["servers"],
@@ -105,6 +111,31 @@ export function ModDetailPage() {
     for (const server of serversQuery.data ?? []) map.set(server.name, server.id);
     return map;
   }, [serversQuery.data]);
+
+  const serverByName = useMemo(() => {
+    const map = new Map<string, Server>();
+    for (const server of serversQuery.data ?? []) map.set(server.name, server);
+    return map;
+  }, [serversQuery.data]);
+
+  const usedByTags = useMemo(() => {
+    const tags = new Map<string, "direct" | "indirect">();
+    const detailGuid = detailQuery.data?.guid;
+    if (!detailGuid) return tags;
+    for (const name of detailQuery.data?.used_by ?? []) {
+      const server = serverByName.get(name);
+      if (!server) continue;
+      const explicitGuids = server.mods.map((mod) => mod.mod_guid);
+      if (explicitGuids.includes(detailGuid)) {
+        tags.set(name, "direct");
+        continue;
+      }
+      if (buildFlat(explicitGuids, graph).has(detailGuid)) {
+        tags.set(name, "indirect");
+      }
+    }
+    return tags;
+  }, [detailQuery.data?.guid, detailQuery.data?.used_by, serverByName, graph]);
 
   const pinMutation = useMutation({
     mutationFn: ({ version, reason }: { version: string; reason: string }) =>
@@ -193,6 +224,10 @@ export function ModDetailPage() {
   }
 
   const detail = detailQuery.data;
+  const requiresNested = buildNested([detail.guid], graph);
+  const requiresFlat = buildFlat([detail.guid], graph);
+  const requiredByNested = buildReverse(detail.guid, graph, "nested");
+  const requiredByFlat = buildReverse(detail.guid, graph, "flat");
   const busy =
     pinMutation.isPending ||
     unpinMutation.isPending ||
@@ -322,36 +357,34 @@ export function ModDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Dependency Tree</CardTitle>
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle>This Mod Requires</CardTitle>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={requiresMode === "nested" ? "default" : "outline"}
+                onClick={() => setRequiresMode("nested")}
+              >
+                Nested
+              </Button>
+              <Button
+                size="sm"
+                variant={requiresMode === "flat" ? "default" : "outline"}
+                onClick={() => setRequiresMode("flat")}
+              >
+                Flat
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            {detail.dependency_tree?.nodes.length ? (
-              <ul className="divide-y divide-stone-800">
-                {[...detail.dependency_tree.nodes]
-                  .sort((a, b) => a.depth - b.depth)
-                  .map((node) => (
-                    <li
-                      key={node.guid}
-                      className="flex flex-wrap items-center gap-2 py-2"
-                      style={{ paddingLeft: `${Math.min(node.depth, 8) * 1.25}rem` }}
-                    >
-                      {node.state !== "unresolved" && node.depth > 0 ? (
-                        <Link
-                          to={`/mods/${node.guid}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="min-w-0 truncate font-mono text-stone-300 hover:text-amber-400"
-                        >
-                          {node.name ?? node.guid}
-                        </Link>
-                      ) : (
-                        <span className="min-w-0 truncate font-mono text-stone-300">{node.name ?? node.guid}</span>
-                      )}
-                      <Badge tone={viaTone(node.via)}>via {node.via}</Badge>
-                      <Badge tone={stateTone(node.state)}>{node.state}</Badge>
-                    </li>
-                  ))}
-              </ul>
+            {requiresMode === "nested" ? (
+              requiresNested.some((root) => root.children.length) ? (
+                <ModTree graph={graph} mode="nested" nested={requiresNested} linkTo={(g) => `/mods/${g}`} />
+              ) : (
+                <p className="text-xs text-stone-400">No dependency information available.</p>
+              )
+            ) : requiresFlat.size ? (
+              <ModTree graph={graph} mode="flat" flat={requiresFlat} linkTo={(g) => `/mods/${g}`} />
             ) : (
               <p className="text-xs text-stone-400">No dependency information available.</p>
             )}
@@ -359,29 +392,38 @@ export function ModDetailPage() {
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Required By</CardTitle>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={requiredByMode === "nested" ? "default" : "outline"}
+                onClick={() => setRequiredByMode("nested")}
+              >
+                Nested
+              </Button>
+              <Button
+                size="sm"
+                variant={requiredByMode === "flat" ? "default" : "outline"}
+                onClick={() => setRequiredByMode("flat")}
+              >
+                Flat
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            {detail.required_by.length ? (
-              <>
-                <p className="mb-2 text-xs text-stone-400">
-                  These library mods declare this one as a dependency. Removing it from the library
-                  or disk is refused while any of them is assigned to a server or in a modpack.
-                </p>
-                <ul className="divide-y divide-stone-800">
-                  {detail.required_by.map((ref) => (
-                    <li key={ref.guid} className="py-2">
-                      <Link
-                        to={`/mods/${ref.guid}`}
-                        className="text-sm font-semibold uppercase tracking-wider text-amber-400 underline-offset-4 hover:underline"
-                      >
-                        {ref.name ?? ref.guid}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </>
+            <p className="mb-2 text-xs text-stone-400">
+              These library mods declare this one as a dependency. Removing it from the library
+              or disk is refused while any of them is assigned to a server or in a modpack.
+            </p>
+            {requiredByMode === "nested" ? (
+              requiredByNested.some((root) => root.children.length) ? (
+                <ModTree graph={graph} mode="nested" nested={requiredByNested} linkTo={(g) => `/mods/${g}`} />
+              ) : (
+                <p className="text-xs text-stone-400">No other mod depends on this one.</p>
+              )
+            ) : requiredByFlat.size ? (
+              <ModTree graph={graph} mode="flat" flat={requiredByFlat} linkTo={(g) => `/mods/${g}`} />
             ) : (
               <p className="text-xs text-stone-400">No other mod depends on this one.</p>
             )}
@@ -397,8 +439,9 @@ export function ModDetailPage() {
               <ul className="divide-y divide-stone-800">
                 {detail.used_by.map((name) => {
                   const serverId = serverIdByName.get(name);
+                  const tag = usedByTags.get(name);
                   return (
-                    <li key={name} className="py-2">
+                    <li key={name} className="flex flex-wrap items-center gap-2 py-2">
                       {serverId !== undefined ? (
                         <Link
                           to={`/servers/${serverId}`}
@@ -409,6 +452,7 @@ export function ModDetailPage() {
                       ) : (
                         <span className="text-sm text-stone-200">{name}</span>
                       )}
+                      {tag ? <Badge tone="neutral">{tag}</Badge> : null}
                     </li>
                   );
                 })}

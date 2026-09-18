@@ -92,6 +92,23 @@ class ResolvedTreeOut(BaseModel):
     edges: list[dict]
 
 
+class ModGraphNodeOut(BaseModel):
+    guid: str
+    name: str | None = None
+    is_local: bool = False
+    api_state: str = "unchecked"
+    is_unlisted: bool = False
+    is_private: bool = False
+    is_obsolete: bool = False
+    api_checked_at: datetime | None = None
+    is_builtin: bool = False
+
+
+class ModGraphOut(BaseModel):
+    nodes: list[ModGraphNodeOut]
+    edges: list[dict]
+
+
 class ModDetailOut(ModOut):
     scenarios: list[ModScenarioOut] = []
     dependencies: list[ModDependencyOut] = []
