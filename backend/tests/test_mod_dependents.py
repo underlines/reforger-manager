@@ -75,7 +75,7 @@ async def test_list_mods_reports_required_by(session):
     await session.commit()
 
     listed = await mods_api.list_mods(
-        local=None, q=None, update=None, state=None, session=session
+        local=None, q=None, state=None, session=session
     )
     rows = {m.guid: m for m in listed}
     assert [ref.guid for ref in rows[CHILD].required_by] == [PARENT]

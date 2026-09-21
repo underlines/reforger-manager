@@ -47,9 +47,9 @@ from ..mods.logview import (
     search_log,
     tail_log_lines,
 )
-from ..mods.freespace import guard_update_scope
+from ..mods.freespace import guard_refresh_scope
 from ..mods.pinning import CurrentEngineBuildMissing, PinRecordNotFound, pin_server_mod, unpin_server_mod
-from ..mods.updates import MOD_UPDATE_APPLY_JOB_KIND, MOD_UPDATE_CHECK_JOB_KIND
+from ..mods.updates import MOD_UPDATE_APPLY_JOB_KIND
 from ..rcon.client import PlayersResult, RconClient, RconError, RconTimeoutError
 from ..schemas.server import (
     ServerCloneIn,
@@ -414,17 +414,10 @@ async def get_preflight(server_id: int, session: AsyncSession = Depends(get_sess
     return (await preflight(session, server_id)).as_dict()
 
 
-@router.post("/{server_id}/mods/update/check", response_model=JobEnqueuedOut, status_code=status.HTTP_202_ACCEPTED, dependencies=authed)
-async def check_server_updates(server_id: int, session: AsyncSession = Depends(get_session)) -> JobEnqueuedOut:
-    await _load(session, server_id)
-    job_id = await job_manager.enqueue(MOD_UPDATE_CHECK_JOB_KIND, params={"scope": server_id})
-    return JobEnqueuedOut(job_id=job_id, kind=MOD_UPDATE_CHECK_JOB_KIND)
-
-
 @router.post("/{server_id}/mods/update/apply", response_model=JobEnqueuedOut, status_code=status.HTTP_202_ACCEPTED, dependencies=authed)
 async def apply_server_updates(server_id: int, session: AsyncSession = Depends(get_session)) -> JobEnqueuedOut:
     await _load(session, server_id)
-    await guard_update_scope(session, server_id)
+    await guard_refresh_scope(session, server_id)
     job_id = await job_manager.enqueue(MOD_UPDATE_APPLY_JOB_KIND, params={"scope": server_id})
     return JobEnqueuedOut(job_id=job_id, kind=MOD_UPDATE_APPLY_JOB_KIND)
 

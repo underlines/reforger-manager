@@ -61,12 +61,7 @@ from .mods.downloader import (
 from .mods.post_engine_update import ENGINE_POST_UPDATE_JOB_KIND, on_engine_updated
 from .mods.schedule import NightlyCheckScheduler
 from .mods.sync import refresh_local_mods, run_mod_sync
-from .mods.updates import (
-    MOD_UPDATE_APPLY_JOB_KIND,
-    MOD_UPDATE_CHECK_JOB_KIND,
-    make_apply_updates_job,
-    make_check_updates_job,
-)
+from .mods.updates import MOD_UPDATE_APPLY_JOB_KIND, make_apply_updates_job
 from .mods.verify import VERIFY_REPAIR_JOB_KIND, run_verify_repair
 from .mods.workshop import workshop as workshop_client
 from .mcp import mcp as mcp_server
@@ -288,10 +283,6 @@ async def _job_verify_repair(ctx: JobContext) -> dict:
     return await run_verify_repair(ctx, guids)
 
 
-async def _job_update_check(ctx: JobContext) -> dict:
-    return await make_check_updates_job((await _job_params(ctx)).get("scope", "all"))(ctx)
-
-
 async def _job_update_apply(ctx: JobContext) -> dict:
     return await make_apply_updates_job((await _job_params(ctx)).get("scope", "all"))(ctx)
 
@@ -318,7 +309,6 @@ async def lifespan(app: FastAPI):
     job_manager.register("mod_sync", run_mod_sync)
     job_manager.register(MOD_DOWNLOAD_JOB_KIND, _job_mod_download)
     job_manager.register(VERIFY_REPAIR_JOB_KIND, _job_verify_repair)
-    job_manager.register(MOD_UPDATE_CHECK_JOB_KIND, _job_update_check)
     job_manager.register(MOD_UPDATE_APPLY_JOB_KIND, _job_update_apply)
     job_manager.register(ENGINE_POST_UPDATE_JOB_KIND, _job_engine_post_update)
     await job_manager.start()

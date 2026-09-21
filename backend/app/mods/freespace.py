@@ -77,13 +77,12 @@ async def ensure_sizes(session: AsyncSession, mods: list[Mod]) -> None:
                 logger.exception("failed to backfill size for %s", mod.guid)
 
 
-async def guard_update_scope(session: AsyncSession, scope: str | int) -> None:
-    """Free-space guard for the update-apply scopes (``'all'`` or a server id).
+async def guard_refresh_scope(session: AsyncSession, scope: str | int) -> None:
+    """Free-space guard for an idempotent refresh.
 
-    Mirrors ``mods.updates._targets_for_scope`` so the projected set matches what
-    the enqueued apply job will actually download: every local mod for
-    ``'all'``, every enabled assigned mod for a server scope. Runs BEFORE the
-    job is enqueued so a too-big apply is refused up front.
+    The engine stages one addon in a temp dir before moving it, and a refresh
+    re-downloads only what actually changed - so the peak requirement is the
+    largest single addon, not the sum of the scope.
     """
     if scope == "all":
         mods = (await session.execute(select(Mod).where(Mod.is_local.is_(True)))).scalars().all()
@@ -96,6 +95,9 @@ async def guard_update_scope(session: AsyncSession, scope: str | int) -> None:
             )
         ).scalars().all()
     mods = list(mods)
-    await ensure_sizes(session, mods)
-    projected, _unknown = estimate_download_bytes(mods)
+    known = [m.size for m in mods if m.size]
+    if not known:
+        logger.info("refresh free-space guard: no known sizes in scope %s", scope)
+        return
+    projected = max(known) * 2
     check_free_space(settings.mods_dir, projected)

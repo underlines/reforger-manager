@@ -40,13 +40,10 @@ from .pinning import (
 )
 from .updates import (
     MOD_UPDATE_APPLY_JOB_KIND,
-    MOD_UPDATE_CHECK_JOB_KIND,
     UpdateScopeError,
-    apply_updates,
-    check_updates,
     make_apply_updates_job,
-    make_check_updates_job,
     normalize_scope,
+    refresh_mods,
 )
 from .logview import (
     LogDownload,
@@ -120,12 +117,9 @@ __all__ = [
     "PinRecordNotFound",
     "CurrentEngineBuildMissing",
     # updates
-    "check_updates",
-    "apply_updates",
-    "make_check_updates_job",
+    "refresh_mods",
     "make_apply_updates_job",
     "normalize_scope",
     "UpdateScopeError",
-    "MOD_UPDATE_CHECK_JOB_KIND",
     "MOD_UPDATE_APPLY_JOB_KIND",
 ]

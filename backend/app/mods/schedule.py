@@ -18,7 +18,7 @@ from ..core.config import settings
 from ..core.db import SessionLocal
 from ..steam.engine import refresh_engine
 from .sync import run_mod_sync
-from .updates import check_updates
+from .updates import refresh_mods
 
 logger = logging.getLogger("reforger.mods.schedule")
 
@@ -50,7 +50,12 @@ def _engine_summary(engine: Any) -> dict[str, Any]:
 
 
 class NightlyCheckScheduler:
-    """Run one non-overlapping check at a configured local time, then periodically."""
+    """Run one non-overlapping check at a configured local time, then periodically.
+
+    Disabled by default (``nightly_check_enabled`` is ``False``). Enabling it
+    means unattended multi-GB mod re-downloads run automatically, because the
+    mod step is now a refresh/re-download rather than a lightweight API poll.
+    """
 
     def __init__(
         self,
@@ -61,7 +66,7 @@ class NightlyCheckScheduler:
         timezone: str = settings.tz,
         session_factory=SessionLocal,
         refresh_engine_fn: Callable[[Any], Awaitable[Any]] = refresh_engine,
-        check_updates_fn: Callable[[str], Awaitable[dict[str, Any]]] = check_updates,
+        refresh_mods_fn: Callable[[str], Awaitable[dict[str, Any]]] = refresh_mods,
         mod_sync_fn: Callable[[Any], Awaitable[dict[str, Any]]] = run_mod_sync,
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
@@ -81,7 +86,7 @@ class NightlyCheckScheduler:
             self._tz = UTC
         self._session_factory = session_factory
         self._refresh_engine = refresh_engine_fn
-        self._check_updates = check_updates_fn
+        self._refresh_mods = refresh_mods_fn
         self._mod_sync = mod_sync_fn
         self._sleep = sleep_fn
         self._task: asyncio.Task[None] | None = None
@@ -126,7 +131,7 @@ class NightlyCheckScheduler:
             try:
                 async with self._session_factory() as session:
                     engine = await self._refresh_engine(session)
-                updates = await self._check_updates("all")
+                updates = await self._refresh_mods("all")
                 mod_sync = await self._mod_sync(context)
             except asyncio.CancelledError:
                 logger.info(

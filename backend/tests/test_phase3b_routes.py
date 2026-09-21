@@ -15,7 +15,6 @@ def test_mod_actions_precede_dynamic_guid_route() -> None:
     paths = [route.path for route in mods.router.routes]
 
     dynamic = paths.index("/mods/{guid}")
-    assert paths.index("/mods/updates/check") < dynamic
     assert paths.index("/mods/updates/apply") < dynamic
     assert paths.index("/mods/verify") < dynamic
     assert paths.index("/mods/{guid}/pin") < dynamic
@@ -26,7 +25,6 @@ def test_server_phase3b_routes_are_registered() -> None:
 
     assert {
         "/servers/{server_id}/preflight",
-        "/servers/{server_id}/mods/update/check",
         "/servers/{server_id}/mods/update/apply",
         "/servers/{server_id}/mods/{guid}/pin",
         "/servers/{server_id}/rcon",

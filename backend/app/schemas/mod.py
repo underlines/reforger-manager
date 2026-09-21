@@ -58,7 +58,6 @@ class ModOut(BaseModel):
     pinned_at: datetime | None = None
 
     # computed
-    has_update: bool = False
     stale_pin: bool = False
     # Library mods that declare this mod as a dependency. Non-empty => deleting
     # this mod / its files is refused while those mods are assigned or packed.

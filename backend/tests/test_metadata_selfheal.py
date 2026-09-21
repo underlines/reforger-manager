@@ -2,11 +2,13 @@
 proceed instead of hard-409-ing a never-downloaded mod.
 
 Covered behaviours:
-1. The update-check backfills ``size`` from the Workshop payload it already holds
-   (and leaves an existing size untouched).
-2. The download route self-heals a ``size = None`` row via one enrich before the
+1. The download route self-heals a ``size = None`` row via one enrich before the
    free-space guard, then enqueues.
-3. If that enrich raises, the original "no recorded size" 409 persists.
+2. If that enrich raises, the original "no recorded size" 409 persists.
+
+(A prior behaviour — the Workshop-backed "update check" backfilling ``size`` —
+was removed with ``check_updates`` in S4: mod refresh no longer calls the
+Workshop API at all, so there is no longer a check step to backfill from.)
 """
 from __future__ import annotations
 
@@ -31,61 +33,11 @@ from app.core.db import Base, get_session
 from app.core.jobs import job_manager
 from app.core.security import get_current_user
 from app.models import Mod
-from app.mods import updates
 from app.mods.workshop import WorkshopError
 
 GUID_A = "AAAAAAAAAAAAAAAA"
 GUID_B = "BBBBBBBBBBBBBBBB"
 JOB_KIND_DOWNLOAD = "mod_download"
-
-
-class _PayloadWorkshop:
-    def __init__(self, payloads: dict[str, dict]) -> None:
-        self.payloads = payloads
-
-    async def get_mod(self, guid: str) -> dict:
-        return self.payloads[guid]
-
-
-class UpdateCheckSizeBackfillTests(unittest.IsolatedAsyncioTestCase):
-    async def asyncSetUp(self) -> None:
-        self.engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-        async with self.engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
-        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
-        async with self.sessions() as session:
-            session.add_all(
-                [
-                    Mod(guid=GUID_A, name="A", is_local=True, installed_version="1.0", size=None),
-                    Mod(guid=GUID_B, name="B", is_local=True, installed_version="1.0", size=100),
-                ]
-            )
-            await session.commit()
-        self.workshop = _PayloadWorkshop(
-            {
-                GUID_A: {"version": "2.0", "name": "A", "size": 500},
-                GUID_B: {"version": "2.0", "name": "B", "size": 999},
-            }
-        )
-        self.patchers = [
-            patch.object(updates, "SessionLocal", self.sessions),
-            patch.object(updates, "workshop", self.workshop),
-        ]
-        for patcher in self.patchers:
-            patcher.start()
-
-    async def asyncTearDown(self) -> None:
-        for patcher in reversed(self.patchers):
-            patcher.stop()
-        await self.engine.dispose()
-
-    async def test_update_check_backfills_size_and_leaves_existing_alone(self) -> None:
-        await updates.check_updates("all")
-        async with self.sessions() as session:
-            a = await session.get(Mod, GUID_A)
-            b = await session.get(Mod, GUID_B)
-        self.assertEqual(a.size, 500)  # was None -> backfilled
-        self.assertEqual(b.size, 100)  # was set -> untouched
 
 
 class _FakeClient:

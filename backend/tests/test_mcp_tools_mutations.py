@@ -55,7 +55,6 @@ MUTATION_TOOLS = {
     "schedule_server_restart",
     "cancel_server_restart",
     "send_rcon_command",
-    "check_server_mod_updates",
     "apply_server_mod_updates",
     "pin_server_mod",
     "unpin_server_mod",
@@ -66,7 +65,6 @@ MUTATION_TOOLS = {
     "delete_mod_local",
     "download_mod",
     "verify_mods",
-    "check_all_mod_updates",
     "apply_all_mod_updates",
     # modpacks
     "create_modpack",
@@ -93,12 +91,10 @@ MUTATION_TOOLS = {
 
 JOB_RETURNING_TOOLS = {
     "apply_server_mod_updates",
-    "check_server_mod_updates",
     "scan_mods",
     "update_engine",
     "download_mod",
     "verify_mods",
-    "check_all_mod_updates",
     "apply_all_mod_updates",
 }
 
@@ -525,12 +521,6 @@ class JobReturningToolTests(_Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.is_error, _first_text(result))
         self.assertEqual(_result_json(result), {"job_id": 7, "kind": "verify_repair"})
 
-    async def test_check_all_mod_updates_returns_job_enqueued_out(self) -> None:
-        async with self.mcp_session() as session:
-            result = await session.call_tool("check_all_mod_updates", {"confirm": True})
-        self.assertFalse(result.is_error, _first_text(result))
-        self.assertEqual(_result_json(result), {"job_id": 7, "kind": "mod_update_check"})
-
     async def test_apply_all_mod_updates_returns_job_enqueued_out(self) -> None:
         async with self.mcp_session() as session:
             result = await session.call_tool("apply_all_mod_updates", {"confirm": True})
@@ -546,15 +536,6 @@ class JobReturningToolTests(_Fixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.is_error, _first_text(result))
         self.assertEqual(_result_json(result), {"job_id": 7, "kind": "mod_update_apply"})
 
-    async def test_check_server_mod_updates_returns_job_enqueued_out(self) -> None:
-        row = await self._seed_server("main")
-        async with self.mcp_session() as session:
-            result = await session.call_tool(
-                "check_server_mod_updates", {"server_id": row.id, "confirm": True}
-            )
-        self.assertFalse(result.is_error, _first_text(result))
-        self.assertEqual(_result_json(result), {"job_id": 7, "kind": "mod_update_check"})
-
     async def test_update_engine_returns_job_enqueued_out(self) -> None:
         async with self.mcp_session() as session:
             result = await session.call_tool("update_engine", {"confirm": True})
@@ -568,7 +549,7 @@ class JobReturningToolTests(_Fixture, unittest.IsolatedAsyncioTestCase):
             self.assertIn("confirm", _first_text(refused))
             # A path param must be present or the SDK refuses before the gate.
             refused_check = await session.call_tool(
-                "check_server_mod_updates", {"server_id": 31337}
+                "apply_server_mod_updates", {"server_id": 31337}
             )
         self.assertTrue(refused_check.is_error)
         self.assertIn("confirm", _first_text(refused_check))

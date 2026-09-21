@@ -1,8 +1,9 @@
-"""Deterministic SQLite tests for mod update intelligence."""
+"""Deterministic SQLite tests for mod update application."""
 from __future__ import annotations
 
 import os
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -10,27 +11,30 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.db import Base
 from app.models.mod import Mod
 from app.models.server import Server, ServerMod
-from app.mods import updates
+
+# ``app/mods/__init__.py`` still imports check_updates/MOD_UPDATE_CHECK_JOB_KIND
+# et al. from ``updates`` -- names this story deletes. A separate, later story
+# (S4) rewires that package init; until then, importing ``app.mods`` normally
+# would fail here for a reason unrelated to this module. Stub the package in
+# ``sys.modules`` (with the real ``__path__`` so submodule/relative imports
+# still resolve) to load ``app.mods.updates`` directly without executing the
+# currently-broken package ``__init__.py``.
+if "app.mods" not in sys.modules:
+    _stub = types.ModuleType("app.mods")
+    _stub.__path__ = [str(Path(__file__).parents[1] / "app" / "mods")]
+    sys.modules["app.mods"] = _stub
+
+from app.mods import updates as updates_module
+from app.mods.updates import refresh_mods
 
 
 GUID_A = "AAAAAAAAAAAAAAAA"
 GUID_B = "BBBBBBBBBBBBBBBB"
-
-
-class _Workshop:
-    def __init__(self, versions: dict[str, str]) -> None:
-        self.versions = versions
-        self.calls: list[str] = []
-
-    async def get_mod(self, guid: str) -> dict:
-        self.calls.append(guid)
-        return {"version": self.versions[guid], "name": f"Workshop {guid[-1]}"}
 
 
 class UpdateTests(unittest.IsolatedAsyncioTestCase):
@@ -48,19 +52,17 @@ class UpdateTests(unittest.IsolatedAsyncioTestCase):
                         name="B",
                         is_local=True,
                         installed_version="1.0",
-                        pinned_version="1.0",
+                        pinned_version="1.5",
                     ),
                     Server(id=7, name="Test"),
-                    ServerMod(server_id=7, mod_guid=GUID_A, load_order=0, pinned_version="1.5"),
-                    ServerMod(server_id=7, mod_guid=GUID_B, load_order=1, pinned_version="1.7"),
+                    ServerMod(server_id=7, mod_guid=GUID_A, load_order=0, pinned_version="2.0"),
+                    # GUID_B carries both a server pin and a library pin; the
+                    # server pin must win for this scope.
+                    ServerMod(server_id=7, mod_guid=GUID_B, load_order=1, pinned_version="1.9"),
                 ]
             )
             await session.commit()
-        self.workshop = _Workshop({GUID_A: "2.0", GUID_B: "2.0"})
-        self.patchers = [
-            patch.object(updates, "SessionLocal", self.sessions),
-            patch.object(updates, "workshop", self.workshop),
-        ]
+        self.patchers = [patch.object(updates_module, "SessionLocal", self.sessions)]
         for patcher in self.patchers:
             patcher.start()
 
@@ -69,65 +71,75 @@ class UpdateTests(unittest.IsolatedAsyncioTestCase):
             patcher.stop()
         await self.engine.dispose()
 
-    async def test_global_scope_skips_any_pin_and_reports_update(self) -> None:
-        # A server pin protects the shared cache during a global update.
-        async with self.sessions() as session:
-            server_mod = await session.scalar(
-                select(ServerMod).where(ServerMod.mod_guid == GUID_A)
-            )
-            server_mod.pinned_version = None
-            await session.commit()
+    async def test_all_scope_passes_every_local_guid_and_only_pinned_versions(self) -> None:
+        downloader = AsyncMock(return_value={"guids": [GUID_A, GUID_B], "progress": 100.0})
+        refresher = AsyncMock(return_value=[GUID_A, GUID_B])
+        with patch.object(updates_module, "run_mod_download", downloader), patch.object(
+            updates_module, "refresh_local_mods", refresher
+        ):
+            result = await refresh_mods("all")
 
-        result = await updates.check_updates("all")
-
+        downloader.assert_awaited_once_with(None, [GUID_A, GUID_B], {GUID_B: "1.5"})
         self.assertEqual(result["scope"], "all")
-        self.assertEqual([row["guid"] for row in result["available_updates"]], [GUID_A])
-        self.assertEqual([row["guid"] for row in result["skipped_pins"]], [GUID_B])
-        self.assertEqual(result["skipped_pins"][0]["pin"]["source"], "library")
+        self.assertEqual(result["requested"], [GUID_A, GUID_B])
+        self.assertEqual(result["pinned"], {GUID_B: "1.5"})
         self.assertEqual(result["unavailable"], [])
-        self.assertEqual(result["errors"], [])
 
-    async def test_apply_passes_only_unpinned_latest_targets_to_downloader(self) -> None:
-        async with self.sessions() as session:
-            server_mod = await session.scalar(
-                select(ServerMod).where(ServerMod.mod_guid == GUID_A)
-            )
-            server_mod.pinned_version = None
-            await session.commit()
-        downloader = AsyncMock(return_value={"guids": [GUID_A], "progress": 100.0})
+    async def test_server_scope_server_pin_beats_library_pin(self) -> None:
+        downloader = AsyncMock(return_value={"guids": [GUID_A, GUID_B], "progress": 100.0})
+        refresher = AsyncMock(return_value=[GUID_A, GUID_B])
+        with patch.object(updates_module, "run_mod_download", downloader), patch.object(
+            updates_module, "refresh_local_mods", refresher
+        ):
+            result = await refresh_mods("7")
 
-        with patch.object(updates, "run_mod_download", downloader):
-            result = await updates.apply_updates("all")
-
-        downloader.assert_awaited_once_with(None, [GUID_A], {GUID_A: "2.0"})
-        self.assertEqual(result["applied"]["guids"], [GUID_A])
-
-    async def test_server_scope_uses_server_pin_before_library_pin(self) -> None:
-        result = await updates.check_updates("7")
-
+        # GUID_A: server pin "2.0" only. GUID_B: both a server pin ("1.9") and a
+        # library pin ("1.5") exist -- the server pin must win.
+        downloader.assert_awaited_once_with(None, [GUID_A, GUID_B], {GUID_A: "2.0", GUID_B: "1.9"})
         self.assertEqual(result["scope"], 7)
-        self.assertEqual(result["available_updates"], [])
-        pins = {row["guid"]: row["pin"] for row in result["skipped_pins"]}
-        self.assertEqual(pins[GUID_A], {"source": "server", "version": "1.5", "server_id": 7})
-        # B has both pins; the server-specific one is the effective pin.
-        self.assertEqual(pins[GUID_B], {"source": "server", "version": "1.7", "server_id": 7})
 
-    async def test_apply_no_update_does_not_call_downloader(self) -> None:
-        self.workshop.versions[GUID_A] = "1.0"
-        self.workshop.versions[GUID_B] = "1.0"
+    async def test_refresh_local_mods_called_with_same_guid_list_as_downloader(self) -> None:
+        downloader = AsyncMock(return_value={"guids": [GUID_A, GUID_B], "progress": 100.0})
+        refresher = AsyncMock(return_value=[GUID_A, GUID_B])
+        with patch.object(updates_module, "run_mod_download", downloader), patch.object(
+            updates_module, "refresh_local_mods", refresher
+        ):
+            await refresh_mods("all")
+
+        downloaded_guids = downloader.await_args.args[1]
+        refresher.assert_awaited_once_with(downloaded_guids)
+
+    def test_no_workshop_import(self) -> None:
+        self.assertFalse(hasattr(updates_module, "workshop"))
+
+    async def test_empty_scope_does_not_call_downloader(self) -> None:
+        # Delete the two library mods so "all" resolves to zero targets.
+        async with self.sessions() as session:
+            for guid in (GUID_A, GUID_B):
+                mod = await session.get(Mod, guid)
+                await session.delete(mod)
+            await session.commit()
+
         downloader = AsyncMock()
-        with patch.object(updates, "run_mod_download", downloader):
-            result = await updates.apply_updates("all")
+        refresher = AsyncMock()
+        with patch.object(updates_module, "run_mod_download", downloader), patch.object(
+            updates_module, "refresh_local_mods", refresher
+        ):
+            result = await refresh_mods("all")
 
         downloader.assert_not_awaited()
-        self.assertEqual(result["available_updates"], [])
-        self.assertEqual(result["applied"]["guids"], [])
+        refresher.assert_not_awaited()
+        self.assertEqual(result["scope"], "all")
+        self.assertEqual(result["requested"], [])
+        self.assertEqual(result["pinned"], {})
+        self.assertEqual(result["downloaded"], {"guids": [], "progress": 100.0})
+        self.assertEqual(result["unavailable"], [])
 
     def test_scope_validation(self) -> None:
-        self.assertEqual(updates.normalize_scope(" ALL "), "all")
-        self.assertEqual(updates.normalize_scope("7"), 7)
-        with self.assertRaises(updates.UpdateScopeError):
-            updates.normalize_scope(0)
+        self.assertEqual(updates_module.normalize_scope(" ALL "), "all")
+        self.assertEqual(updates_module.normalize_scope("7"), 7)
+        with self.assertRaises(updates_module.UpdateScopeError):
+            updates_module.normalize_scope(0)
 
 
 if __name__ == "__main__":

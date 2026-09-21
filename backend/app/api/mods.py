@@ -1,8 +1,9 @@
 """Mod library — disk-scanned, Workshop-enriched.
 
-GET  /api/mods                      list (filters: ?local ?q ?update ?state)
-GET  /api/mods/{guid}               full detail (+ versions cache, dep tree, used_by)
+GET  /api/mods                      list (filters: ?local ?q ?state)
+GET  /api/mods/{guid}               full detail (DB-only: dep tree, used_by; versions always [])
 GET  /api/mods/{guid}/dependencies  resolved dependency tree only
+GET  /api/mods/{guid}/versions      on-demand Workshop version history (live API call)
 POST /api/mods/scan                 enqueue the `mod_sync` job
 POST /api/mods/add                  add by Workshop URL or bare 16-hex id
 GET  /api/mods/search?q=            proxy to the Workshop search
@@ -35,15 +36,12 @@ from ..models import (
     ServerMod,
 )
 from ..mods.downloader import MOD_DOWNLOAD_JOB_KIND
-from ..mods.freespace import check_free_space, ensure_sizes, estimate_download_bytes, guard_update_scope
+from ..mods.freespace import check_free_space, ensure_sizes, estimate_download_bytes, guard_refresh_scope
 from ..mods.pinning import CurrentEngineBuildMissing, PinRecordNotFound, pin_mod, unpin_mod
 from ..mods.resolve import ENGINE_BUILTIN_GUIDS, resolve_dependencies
 from ..mods.scanner import addons_root, resolve_addon_dir
 from ..mods.sync import enrich_one
-from ..mods.updates import (
-    MOD_UPDATE_APPLY_JOB_KIND,
-    MOD_UPDATE_CHECK_JOB_KIND,
-)
+from ..mods.updates import MOD_UPDATE_APPLY_JOB_KIND
 from ..mods.verify import VERIFY_REPAIR_JOB_KIND
 from ..mods.workshop import ModNotFound, WorkshopError, workshop
 from ..schemas.job import JobEnqueuedOut
@@ -77,14 +75,6 @@ async def _engine_build(session: AsyncSession) -> str | None:
     return row.installed_build if row is not None else None
 
 
-def _has_update(mod: Mod) -> bool:
-    return bool(
-        mod.latest_version
-        and mod.installed_version
-        and mod.latest_version != mod.installed_version
-    )
-
-
 def _stale_pin(mod: Mod, engine_build: str | None) -> bool:
     # Placeholder — full pin/stale logic is a later phase. Exposed as a plain
     # build-mismatch check so the column is usable now.
@@ -97,7 +87,6 @@ def _to_out(
     required_by: list[ModRefOut] | None = None,
 ) -> ModOut:
     out = ModOut.model_validate(mod)
-    out.has_update = _has_update(mod)
     out.stale_pin = _stale_pin(mod, engine_build)
     out.required_by = required_by or []
     return out
@@ -201,7 +190,6 @@ async def _delete_block_detail(
 async def list_mods(
     local: bool | None = Query(default=None),
     q: str | None = Query(default=None),
-    update: bool | None = Query(default=None),
     state: str | None = Query(default=None),
     refs: bool = Query(default=False),
     compact: Annotated[bool, Query()] = False,
@@ -212,12 +200,6 @@ async def list_mods(
         stmt = stmt.where(Mod.is_local.is_(local))
     if q:
         stmt = stmt.where(Mod.name.ilike(f"%{q}%"))
-    if update:
-        stmt = stmt.where(
-            Mod.latest_version.isnot(None),
-            Mod.installed_version.isnot(None),
-            Mod.latest_version != Mod.installed_version,
-        )
     if state:
         stmt = stmt.where(Mod.api_state == state)
 
@@ -328,15 +310,9 @@ async def get_mods_graph(session: AsyncSession = Depends(get_session)) -> ModGra
     return ModGraphOut(nodes=list(nodes.values()), edges=edges)
 
 
-@router.post("/updates/check", response_model=JobEnqueuedOut, status_code=status.HTTP_202_ACCEPTED)
-async def check_all_updates() -> JobEnqueuedOut:
-    job_id = await job_manager.enqueue(MOD_UPDATE_CHECK_JOB_KIND, params={"scope": "all"})
-    return JobEnqueuedOut(job_id=job_id, kind=MOD_UPDATE_CHECK_JOB_KIND)
-
-
 @router.post("/updates/apply", response_model=JobEnqueuedOut, status_code=status.HTTP_202_ACCEPTED)
 async def apply_all_updates(session: AsyncSession = Depends(get_session)) -> JobEnqueuedOut:
-    await guard_update_scope(session, "all")
+    await guard_refresh_scope(session, "all")
     job_id = await job_manager.enqueue(MOD_UPDATE_APPLY_JOB_KIND, params={"scope": "all"})
     return JobEnqueuedOut(job_id=job_id, kind=MOD_UPDATE_APPLY_JOB_KIND)
 
@@ -541,15 +517,7 @@ async def get_mod_detail(
     ]
     base = _to_out(mod, engine_build, required_by)
 
-    versions: list[dict] = []
-    try:
-        versions = await workshop.get_versions(guid)
-    except ModNotFound:
-        versions = []
-    except WorkshopError:
-        versions = []
-
-    tree = await resolve_dependencies(session, [guid])
+    tree = await resolve_dependencies(session, [guid], use_api=False, use_disk=True)
 
     used_by = list(
         (
@@ -567,7 +535,7 @@ async def get_mod_detail(
         scenarios=list(mod.scenarios),
         dependencies=list(mod.dependencies),
         dependency_tree=ResolvedTreeOut(**tree.as_dict()),
-        versions=versions,
+        versions=[],
         used_by=used_by,
     )
 
@@ -579,6 +547,16 @@ async def get_mod_dependencies(
     guid = guid.upper()
     tree = await resolve_dependencies(session, [guid])
     return ResolvedTreeOut(**tree.as_dict())
+
+
+@router.get("/{guid}/versions", response_model=list[dict])
+async def get_mod_versions(guid: str) -> list[dict]:
+    try:
+        return await workshop.get_versions(guid.upper())
+    except ModNotFound:
+        return []
+    except WorkshopError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Workshop lookup failed: {exc}")
 
 
 # --------------------------------------------------------------- scan / add

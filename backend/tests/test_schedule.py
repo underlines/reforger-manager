@@ -47,7 +47,7 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
             enabled=True,
             session_factory=_Session,
             refresh_engine_fn=refresh,
-            check_updates_fn=updates,
+            refresh_mods_fn=updates,
             mod_sync_fn=sync,
         )
         summary = await scheduler.run_cycle()
@@ -78,7 +78,7 @@ class ScheduleTests(unittest.IsolatedAsyncioTestCase):
         scheduler = NightlyCheckScheduler(
             session_factory=_Session,
             refresh_engine_fn=refresh,
-            check_updates_fn=unused,
+            refresh_mods_fn=unused,
             mod_sync_fn=unused,
         )
         first = asyncio.create_task(scheduler.run_cycle())

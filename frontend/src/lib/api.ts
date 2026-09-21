@@ -47,7 +47,6 @@ export type Mod = {
   api_state: string;
   is_local: boolean;
   pinned_version: string | null;
-  has_update: boolean;
   stale_pin: boolean;
   required_by?: ModRef[];
 };

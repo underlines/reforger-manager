@@ -11,12 +11,16 @@ Three passes:
    ``addon.gproj``; its ``mod_scenarios`` rows are replaced with the offline
    ``strings``-scan results (name / mode / count still NULL).
 
-2. **Enrich** (rate-limited, best-effort per mod) via :func:`enrich_one`:
-   ``get_mod`` + ``get_versions`` + ``get_scenarios`` + ``get_dependencies``.
-   Success -> ``api_state = "ok"``, ``latest_*`` filled, API scenarios/deps
-   upserted (deps as ``source = "api"``, keeping any gproj-only edges).
-   ``ModNotFound`` -> ``api_state = "not_found"`` and the gproj data is left
-   untouched. A transient error is logged and skipped.
+2. **Enrich** (rate-limited, best-effort per mod) via :func:`enrich_local_one`:
+   ``get_scenarios`` + ``get_dependencies`` only. Success -> ``api_state = "ok"``,
+   API scenarios/deps upserted (deps as ``source = "api"``, keeping any gproj-only
+   edges). ``ModNotFound`` -> ``api_state = "not_found"`` and the gproj data is
+   left untouched. A transient error is logged and skipped. ``get_mod`` /
+   ``get_versions`` are deliberately not called here: the ``latest_*`` columns
+   they fed are no longer consumed by any update logic (that concept was removed
+   elsewhere in this sprint), so pass 2 halves its Workshop API load. The full
+   4-call :func:`enrich_one` remains for ``POST /api/mods/add`` and
+   ``freespace.ensure_sizes``, which still need it.
 
 3. **Prune local flag.** ``mods`` rows whose guid was not in this scan get
    ``is_local = False`` — never deleted (a server definition or a URL-added mod
@@ -205,6 +209,55 @@ async def enrich_one(
             thumb = previews[0]
     if thumb:
         row.thumbnail = thumb
+
+    await _upsert_api_scenarios(session, guid, api_scenarios)
+    await _upsert_api_dependencies(session, guid, api_deps)
+    await _ensure_dependency_stub_rows(session, guid)
+
+    await session.flush()
+    return row
+
+
+async def enrich_local_one(
+    session: AsyncSession,
+    guid: str,
+    *,
+    client: WorkshopClient | None = None,
+) -> Mod:
+    """Enrich one ``mods`` row's scenarios + dependencies from the Workshop
+    API — the ``mod_sync`` pass-2 counterpart of :func:`enrich_one`. Flushes
+    but does not commit — the caller owns the transaction.
+
+    Calls only ``get_scenarios`` + ``get_dependencies``, not ``get_mod`` /
+    ``get_versions``: the ``latest_*`` columns the latter two fed are no longer
+    consumed by any update logic, so pass 2 halves its Workshop API load.
+    :func:`enrich_one` keeps the full 4-call enrichment for
+    ``POST /api/mods/add`` and ``freespace.ensure_sizes``.
+
+    Raises :class:`WorkshopError` only for *transient* failures; a 404 is
+    swallowed and recorded as ``api_state = not_found``.
+    """
+    client = client or workshop
+    guid = guid.upper()
+    row = await session.get(Mod, guid)
+    if row is None:
+        row = Mod(guid=guid, is_local=False)
+        session.add(row)
+
+    now = _utcnow()
+    try:
+        api_scenarios = await client.get_scenarios(guid)
+        api_deps = await client.get_dependencies(guid)
+    except ModNotFound:
+        row.api_state = ApiState.not_found
+        row.api_checked_at = now
+        await session.flush()
+        return row
+
+    # ---- success --------------------------------------------------------
+    row.api_state = ApiState.ok
+    row.api_checked_at = now
+    row.last_checked = now
 
     await _upsert_api_scenarios(session, guid, api_scenarios)
     await _upsert_api_dependencies(session, guid, api_deps)
@@ -436,7 +489,7 @@ async def run_mod_sync(ctx: JobContext) -> dict:
         await ctx.progress(pct, sm.name or sm.guid)
         try:
             async with SessionLocal() as session:
-                row = await enrich_one(session, sm.guid, client=workshop)
+                row = await enrich_local_one(session, sm.guid, client=workshop)
                 await session.commit()
             state = row.api_state.value if hasattr(row.api_state, "value") else row.api_state
             if state == "ok":

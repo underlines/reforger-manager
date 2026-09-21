@@ -82,7 +82,6 @@ EXPECTED_MUTATION_NAMES = {
     "schedule_server_restart",
     "cancel_server_restart",
     "send_rcon_command",
-    "check_server_mod_updates",
     "apply_server_mod_updates",
     "pin_server_mod",
     "unpin_server_mod",

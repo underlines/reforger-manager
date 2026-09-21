@@ -50,7 +50,6 @@ type ModDetail = {
   pinned_at_build: string | null;
   pinned_reason: string | null;
   pinned_at: string | null;
-  has_update: boolean;
   stale_pin: boolean;
   created_at: string | null;
   updated_at: string | null;
@@ -78,6 +77,16 @@ const formatSize = (bytes: number | null) => {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 };
 
+const relativeAge = (iso: string): string => {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "just now";
+  const days = Math.floor(ms / 86_400_000);
+  if (days < 1) return "just now";
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"}`;
+  const months = Math.floor(days / 30);
+  return `${months} month${months === 1 ? "" : "s"}`;
+};
+
 export function ModDetailPage() {
   const { guid = "" } = useParams();
   const navigate = useNavigate();
@@ -96,6 +105,17 @@ export function ModDetailPage() {
     queryKey: ["mod", guid],
     queryFn: () => api<ModDetail>(`/api/mods/${guid}`),
     enabled: guid.length > 0,
+  });
+
+  // Version history hits the live Workshop API — runs on request only (button
+  // click below), never on mount / focus / reconnect.
+  const versionsQuery = useQuery({
+    queryKey: ["mod-versions", guid],
+    queryFn: () => api<ModVersion[]>(`/api/mods/${guid}/versions`),
+    enabled: false,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const graphQuery = useModGraph();
@@ -198,7 +218,7 @@ export function ModDetailPage() {
 
   const openPinDialog = () => {
     const mod = detailQuery.data;
-    setPinVersion(mod?.latest_version ?? mod?.installed_version ?? "");
+    setPinVersion(mod?.installed_version ?? "");
     setPinReason(mod?.pinned_reason ?? "");
     setPinOpen(true);
   };
@@ -224,6 +244,9 @@ export function ModDetailPage() {
   }
 
   const detail = detailQuery.data;
+  const checkedIso = detail.api_checked_at ?? detail.last_checked;
+  const checkedMs = checkedIso ? Date.now() - new Date(checkedIso).getTime() : NaN;
+  const checkedDays = Number.isFinite(checkedMs) ? Math.floor(checkedMs / 86_400_000) : null;
   const requiresNested = buildNested([detail.guid], graph);
   const requiresFlat = buildFlat([detail.guid], graph);
   const requiredByNested = buildReverse(detail.guid, graph, "nested");
@@ -288,7 +311,6 @@ export function ModDetailPage() {
             <div className="flex flex-wrap items-center gap-2">
               {detail.is_local && <Badge tone="good">Local</Badge>}
               {!detail.is_local && <Badge tone="neutral">Not local</Badge>}
-              {detail.has_update && <Badge tone="warn">Update available</Badge>}
               {detail.stale_pin && <Badge tone="bad">Stale pin</Badge>}
               {detail.pinned_version && !detail.stale_pin && (
                 <Badge tone="neutral">Pinned {detail.pinned_version}</Badge>
@@ -310,6 +332,15 @@ export function ModDetailPage() {
               <span>Size: {formatSize(detail.size)}</span>
               {detail.latest_game_version && <span>Game: {detail.latest_game_version}</span>}
             </div>
+            {checkedIso === null || checkedDays === null ? (
+              <p className="text-xs text-amber-300">Never checked against the Workshop</p>
+            ) : checkedDays >= 30 ? (
+              <p className="text-xs text-amber-300">
+                Checked {relativeAge(checkedIso)} ago — may be out of date
+              </p>
+            ) : (
+              <p className="text-xs text-stone-400">Checked {relativeAge(checkedIso)} ago</p>
+            )}
             {detail.pinned_reason && (
               <p className="text-[11px] text-amber-300">
                 Pin reason: {detail.pinned_reason}
@@ -331,27 +362,42 @@ export function ModDetailPage() {
             <CardTitle>Version History</CardTitle>
           </CardHeader>
           <CardContent>
-            {detail.versions.length ? (
-              <table className="w-full text-xs text-stone-300">
-                <thead>
-                  <tr className="border-b border-stone-700 text-left text-[10px] uppercase tracking-widest text-stone-500">
-                    <th className="py-2 pr-4 font-semibold">Version</th>
-                    <th className="py-2 pr-4 font-semibold">Game version</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-800">
-                  {detail.versions.map((version, index) => (
-                    <tr key={`${String(version.version)}-${index}`}>
-                      <td className="py-2 pr-4 font-mono text-stone-200">{version.version ?? "—"}</td>
-                      <td className="py-2 pr-4">{version.game_version ?? "—"}</td>
+            {versionsQuery.data ? (
+              versionsQuery.data.length ? (
+                <table className="w-full text-xs text-stone-300">
+                  <thead>
+                    <tr className="border-b border-stone-700 text-left text-[10px] uppercase tracking-widest text-stone-500">
+                      <th className="py-2 pr-4 font-semibold">Version</th>
+                      <th className="py-2 pr-4 font-semibold">Game version</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-stone-800">
+                    {versionsQuery.data.map((version, index) => (
+                      <tr key={`${String(version.version)}-${index}`}>
+                        <td className="py-2 pr-4 font-mono text-stone-200">{version.version ?? "—"}</td>
+                        <td className="py-2 pr-4">{version.game_version ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-xs leading-5 text-stone-400">
+                  No version history available — the mod may be new, or the Workshop API was unreachable.
+                </p>
+              )
+            ) : versionsQuery.isFetching ? (
+              <p className="text-xs text-stone-400">Loading version history...</p>
             ) : (
-              <p className="text-xs leading-5 text-stone-400">
-                No version history available — the mod may be new, or the Workshop API was unreachable.
-              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button size="sm" onClick={() => void versionsQuery.refetch()}>
+                  Load version history
+                </Button>
+                {versionsQuery.isError && (
+                  <p className="text-xs text-amber-300">
+                    Failed to load version history: {errorMessage(versionsQuery.error)}
+                  </p>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>

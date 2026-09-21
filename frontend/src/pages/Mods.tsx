@@ -34,7 +34,6 @@ type ModRecord = {
   pinned_version: string | null;
   pinned_at_build: string | null;
   pinned_reason: string | null;
-  has_update: boolean;
   stale_pin: boolean;
   required_by?: { guid: string; name: string | null }[];
   // Present only when the list is fetched with `?refs=1`; guard with `?? undefined`.
@@ -181,7 +180,7 @@ const treeMatchesFilter = (
   const mod = modByGuid.get(node.guid);
   // A node with no ModRecord (the synthesized engine-builtin node, or a
   // genuinely unresolved/dangling dependency) isn't part of the filterable
-  // catalogue — the name/local/state/update filters don't apply to it, so it
+  // catalogue — the name/local/state filters don't apply to it, so it
   // always passes rather than being treated as a non-match and pruned.
   if (!mod || passes(mod)) return true;
   return node.children.some((child) => treeMatchesFilter(child, modByGuid, passes));
@@ -202,7 +201,6 @@ export function ModsPage() {
   const [search, setSearch] = useState("");
   const [local, setLocal] = useState("all");
   const [state, setState] = useState<FilterState>("all");
-  const [updatesOnly, setUpdatesOnly] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pinTarget, setPinTarget] = useState<ModRecord | null>(null);
   const [pinVersion, setPinVersion] = useState("");
@@ -224,7 +222,6 @@ export function ModsPage() {
   if (search.trim()) filters.set("q", search.trim());
   if (local !== "all") filters.set("local", local);
   if (state !== "all") filters.set("state", state);
-  if (updatesOnly) filters.set("update", "true");
   const filterString = filters.toString();
   const modsQuery = useQuery({
     queryKey: ["mods", filterString],
@@ -408,11 +405,10 @@ export function ModsPage() {
       if (local === "true" && !mod.is_local) return false;
       if (local === "false" && mod.is_local) return false;
       if (state !== "all" && mod.api_state !== state) return false;
-      if (updatesOnly && !mod.has_update) return false;
       return true;
     };
     return pruneNested(nestedTree, modByGuid, passes);
-  }, [nestedTree, modByGuid, search, local, state, updatesOnly]);
+  }, [nestedTree, modByGuid, search, local, state]);
 
   useEffect(() => {
     if (!graphQuery.data) return;
@@ -500,15 +496,12 @@ export function ModsPage() {
             <Button variant="outline" onClick={() => jobMutation.mutate({ path: "/api/mods/scan" })} disabled={busy}>
               {busy ? "Queueing..." : "Scan cache"}
             </Button>
-            <Button onClick={() => jobMutation.mutate({ path: "/api/mods/updates/check" })} disabled={busy}>
-              Check updates
-            </Button>
             <Button
               variant="outline"
               onClick={() => jobMutation.mutate({ path: "/api/mods/updates/apply" })}
               disabled={busy}
             >
-              Apply all updates
+              Update all mods
             </Button>
           </>
         }
@@ -540,7 +533,7 @@ export function ModsPage() {
       </Card>
       <Card className="mb-4">
         <CardContent className="flex flex-col gap-3 pt-4">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_10rem_10rem_auto]">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_10rem_10rem]">
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -568,14 +561,6 @@ export function ModsPage() {
               <option value="not_found">Unavailable</option>
               <option value="unchecked">Unchecked</option>
             </select>
-            <label className="flex h-10 items-center gap-2 whitespace-nowrap text-xs text-stone-300">
-              <input
-                type="checkbox"
-                checked={updatesOnly}
-                onChange={(event) => setUpdatesOnly(event.target.checked)}
-              />
-              Updates only
-            </label>
           </div>
           <div className="flex flex-wrap gap-2 border-t border-stone-800 pt-3">
             <div className="flex items-center gap-2">
@@ -722,7 +707,6 @@ export function ModsPage() {
                               >
                                 {mod.name ?? mod.guid}
                               </button>
-                              {mod.has_update && <Badge tone="warn">Update</Badge>}
                               {mod.stale_pin && <Badge tone="bad">Stale pin</Badge>}
                               {mod.pinned_version && !mod.stale_pin && (
                                 <Badge tone="neutral">Pinned {mod.pinned_version}</Badge>

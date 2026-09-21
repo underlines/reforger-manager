@@ -1,4 +1,9 @@
-"""API-only mod update discovery and guarded update application.
+"""Mod update application: re-run the engine's headless downloader for every mod
+in scope, honouring any explicit pin.
+
+There is no Workshop API call involved: the engine's own downloader is
+idempotent, so requesting an addon already at the target version is a
+no-op transfer. That single primitive covers "update all" correctly.
 
 The public functions open their own database session so they can be used by a
 route or scheduler.  Job factories capture the requested scope because a
@@ -8,15 +13,14 @@ route or scheduler.  Job factories capture the requested scope because a
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
 from ..core.db import SessionLocal
-from ..models import ApiState, Mod, Server, ServerMod
+from ..models import Mod, Server, ServerMod
 from .downloader import run_mod_download
-from .workshop import ModNotFound, WorkshopError, workshop
+from .sync import refresh_local_mods
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +28,6 @@ if TYPE_CHECKING:
     from ..core.jobs import JobContext
 
 
-MOD_UPDATE_CHECK_JOB_KIND = "mod_update_check"
 MOD_UPDATE_APPLY_JOB_KIND = "mod_update_apply"
 
 UpdateScope = str | int
@@ -50,100 +53,62 @@ def normalize_scope(scope: UpdateScope) -> str | int:
     raise UpdateScopeError("scope must be 'all' or a positive server id")
 
 
-async def check_updates(scope: UpdateScope) -> dict[str, Any]:
-    """Check installed target mods against Workshop metadata without downloading."""
-    normalized = normalize_scope(scope)
-    async with SessionLocal() as session:
-        result = await _check_updates(session, normalized)
-        await session.commit()
-        return result
+async def refresh_mods(scope: UpdateScope, ctx: "JobContext | None" = None) -> dict[str, Any]:
+    """Re-download every mod in scope to its latest version (pins honoured).
 
-
-async def apply_updates(scope: UpdateScope) -> dict[str, Any]:
-    """Download every currently available, unpinned update in ``scope``.
-
-    This direct helper intentionally has no progress context.  Routes should
-    enqueue :func:`make_apply_updates_job` instead so the downloader can report
-    its progress through its real ``JobContext``.
+    No Workshop API calls: the engine's own downloader is idempotent, so an
+    addon already at the target version is a no-op.
     """
     normalized = normalize_scope(scope)
     async with SessionLocal() as session:
-        result = await _check_updates(session, normalized)
-        await session.commit()
-    return await _apply_result(result, None)
+        targets = await _targets_for_scope(session, normalized)
+
+    guids: list[str] = []
+    versions: dict[str, str] = {}
+    unavailable: list[str] = []
+    for target in targets:
+        mod = target["mod"]
+        if isinstance(mod, _MissingMod):
+            unavailable.append(mod.guid)
+            continue
+        guid = mod.guid.upper()
+        guids.append(guid)
+        pin = target["pin"]
+        if pin:
+            version = pin.get("version")
+            if version is not None:
+                versions[guid] = version
+
+    if not guids:
+        return {
+            "scope": normalized,
+            "requested": guids,
+            "pinned": versions,
+            "downloaded": {"guids": [], "progress": 100.0},
+            "refreshed": [],
+            "unavailable": unavailable,
+        }
+
+    downloaded = await run_mod_download(ctx, guids, versions)
+    refreshed = await refresh_local_mods(guids)
+    return {
+        "scope": normalized,
+        "requested": guids,
+        "pinned": versions,
+        "downloaded": downloaded,
+        "refreshed": refreshed,
+        "unavailable": unavailable,
+    }
 
 
-def make_check_updates_job(scope: UpdateScope) -> JobFactory:
+def make_apply_updates_job(scope: UpdateScope) -> JobFactory:
     """Return a JobManager-compatible closure with a captured validated scope."""
     normalized = normalize_scope(scope)
 
     async def job(ctx: "JobContext") -> dict[str, Any]:
-        async with SessionLocal() as session:
-            result = await _check_updates(session, normalized, ctx)
-            await session.commit()
-            return result
+        return await refresh_mods(normalized, ctx)
 
     return job
-
-
-def make_apply_updates_job(scope: UpdateScope) -> JobFactory:
-    """Return a job closure which checks first, then downloads allowed updates."""
-    normalized = normalize_scope(scope)
-
-    async def job(ctx: "JobContext") -> dict[str, Any]:
-        async with SessionLocal() as session:
-            result = await _check_updates(session, normalized, ctx)
-            await session.commit()
-        return await _apply_result(result, ctx)
-
-    return job
-
-
-async def _check_updates(
-    session: "AsyncSession", scope: str | int, ctx: "JobContext | None" = None
-) -> dict[str, Any]:
-    targets = await _targets_for_scope(session, scope)
-    result: dict[str, Any] = {
-        "scope": scope,
-        "available_updates": [],
-        "skipped_pins": [],
-        "unavailable": [],
-        "errors": [],
-        "checked": len(targets),
-    }
-    if ctx:
-        await ctx.progress(0.0, f"checking {len(targets)} mod(s)")
-
-    for index, target in enumerate(targets, start=1):
-        mod = target["mod"]
-        item = _item_base(mod, target)
-        if isinstance(mod, _MissingMod):
-            result["unavailable"].append({**item, "reason": "not_in_library"})
-        else:
-            try:
-                remote = await workshop.get_mod(mod.guid)
-            except ModNotFound:
-                mod.api_state = ApiState.not_found
-                mod.api_checked_at = datetime.now(UTC)
-                result["unavailable"].append({**item, "reason": "not_resolvable"})
-            except WorkshopError as exc:
-                result["errors"].append({**item, "reason": "workshop_error", "detail": str(exc)})
-            else:
-                _record_workshop_state(mod, remote)
-                latest = mod.latest_version
-                if not mod.installed_version:
-                    result["unavailable"].append({**item, "reason": "not_installed", "latest_version": latest})
-                elif target["pin"]:
-                    result["skipped_pins"].append(
-                        {**item, "latest_version": latest, "pin": target["pin"]}
-                    )
-                elif latest and latest != mod.installed_version:
-                    result["available_updates"].append(
-                        {**item, "latest_version": latest, "target_version": latest}
-                    )
-        if ctx:
-            await ctx.progress(index * 100.0 / len(targets), f"checked {mod.name or mod.guid}")
-    return result
 
 
 async def _targets_for_scope(session: "AsyncSession", scope: str | int) -> list[dict[str, Any]]:
@@ -219,52 +184,3 @@ def _pin(source: str, version: str | None, server_id: int | None = None) -> dict
     if server_id is not None:
         pin["server_id"] = server_id
     return pin
-
-
-def _item_base(mod: Mod | _MissingMod, target: dict[str, Any]) -> dict[str, Any]:
-    item: dict[str, Any] = {
-        "guid": mod.guid,
-        "name": mod.name,
-        "installed_version": mod.installed_version,
-    }
-    if target["server_id"] is not None:
-        item["server_id"] = target["server_id"]
-    return item
-
-
-def _record_workshop_state(mod: Mod, remote: dict[str, Any]) -> None:
-    mod.latest_version = remote.get("version") or mod.latest_version
-    mod.latest_game_version = remote.get("game_version") or mod.latest_game_version
-    mod.name = remote.get("name") or mod.name
-    mod.is_unlisted = bool(remote.get("unlisted", False))
-    mod.is_private = bool(remote.get("private", False))
-    mod.is_obsolete = bool(remote.get("obsolete", False))
-    mod.api_state = ApiState.ok
-    checked_at = datetime.now(UTC)
-    mod.api_checked_at = checked_at
-    mod.last_checked = checked_at
-
-    # Self-heal: a never-downloaded mod keeps size = NULL, which the free-space
-    # guard then refuses. Backfill from the payload we already hold (mirroring
-    # the enrich_one chain) ONLY when it is NULL — never clobber a known size.
-    if mod.size is None:
-        api_size = remote.get("size")
-        if api_size is None:
-            versions = remote.get("versions")
-            if isinstance(versions, list) and versions:
-                api_size = versions[0].get("size")
-        if api_size is not None:
-            try:
-                mod.size = int(api_size)
-            except (TypeError, ValueError):
-                pass
-
-
-async def _apply_result(result: dict[str, Any], ctx: "JobContext | None") -> dict[str, Any]:
-    updates = result["available_updates"]
-    versions = {row["guid"].upper(): row["target_version"] for row in updates}
-    if not versions:
-        result["applied"] = {"guids": [], "versions": {}, "progress": 100.0, "downloaded": {}}
-        return result
-    result["applied"] = await run_mod_download(ctx, list(versions), versions)
-    return result

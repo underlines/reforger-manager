@@ -106,7 +106,6 @@ class ModListFilters(BaseModel):
 
     local: bool | None = None
     q: str | None = None
-    update: bool | None = None
     state: str | None = None
     compact: bool = True
 
@@ -301,13 +300,12 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         path="/api/mods",
         description=(
             "List the mod library: names, installed vs latest Workshop "
-            "versions, update availability, pin staleness against the current "
-            "engine build, and which servers/modpacks reference each mod. "
-            "Optional filters: local=true only downloaded mods; q= name "
-            "substring; update=true only mods with an update available; "
-            "state= Workshop api_state (e.g. 'ok', 'deleted'). Returns the "
-            "compact shape by default (no required_by/thumbnail); pass "
-            "compact=false for the full REST shape."
+            "versions, pin staleness against the current engine build, and "
+            "which servers/modpacks reference each mod. Optional filters: "
+            "local=true only downloaded mods; q= name substring; state= "
+            "Workshop api_state (e.g. 'ok', 'deleted'). Returns the compact "
+            "shape by default (no required_by/thumbnail); pass compact=false "
+            "for the full REST shape."
         ),
         arg_model=ModListFilters,
     ),
@@ -633,33 +631,19 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         confirm=True,
         timeout_s=30.0,
     ),
-    # Mods (server-scoped): check/apply pair + per-assignment pin/unpin.
-    ToolSpec(
-        name="check_server_mod_updates",
-        method="POST",
-        path="/api/servers/{server_id}/mods/update/check",
-        description=(
-            "Enqueue the mod-update-check job scoped to this server's "
-            "assigned mod set: refreshes latest Workshop versions and pin "
-            "staleness for exactly those mods — downloads nothing. Returns "
-            "the enqueued job ({job_id, kind}) immediately — poll it with "
-            "wait_for_job(job_id), then use list_mods (update=true) to see "
-            "what is newer and apply_server_mod_updates to act on it."
-        ),
-        confirm=True,
-    ),
+    # Mods (server-scoped): apply (idempotent refresh) + per-assignment pin/unpin.
     ToolSpec(
         name="apply_server_mod_updates",
         method="POST",
         path="/api/servers/{server_id}/mods/update/apply",
         description=(
-            "Enqueue the mod-update-apply job for this server's assigned mod "
-            "set: downloads newer Workshop versions where available and "
-            "reconciles pins against the current engine build. Side effect: "
-            "writes to the mod disk cache. Returns the enqueued job "
-            "({job_id, kind}) immediately — poll it with "
-            "wait_for_job(job_id). 409 while the server is running or the "
-            "free-space guard trips."
+            "Enqueue a mod-refresh job for this server's assigned mod set: "
+            "re-runs the engine's own downloader for each mod honouring any "
+            "pin — a no-op transfer for anything already current, a real "
+            "download otherwise. Side effect: writes to the mod disk cache. "
+            "Returns the enqueued job ({job_id, kind}) immediately — poll it "
+            "with wait_for_job(job_id). 409 while the server is running or "
+            "the free-space guard trips."
         ),
         confirm=True,
     ),
@@ -776,29 +760,16 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         confirm=True,
     ),
     ToolSpec(
-        name="check_all_mod_updates",
-        method="POST",
-        path="/api/mods/updates/check",
-        description=(
-            "Enqueue a library-WIDE mod-update-check job: refresh latest Workshop "
-            "versions and pin staleness for every mod in the library — downloads "
-            "nothing. Use check_server_mod_updates instead to scope it to one "
-            "server's assigned set. Returns the enqueued job ({job_id, kind}) "
-            "immediately — poll it with wait_for_job(job_id), then list_mods "
-            "(update=true) to see what is newer."
-        ),
-        confirm=True,
-    ),
-    ToolSpec(
         name="apply_all_mod_updates",
         method="POST",
         path="/api/mods/updates/apply",
         description=(
-            "Enqueue a library-WIDE mod-update-apply job: download the newer "
-            "Workshop version of every library mod that has one and reconcile pins "
-            "against the current engine build. Side effect: writes to the mod disk "
-            "cache. 409 while any server is running or the free-space guard trips. "
-            "Returns the enqueued job ({job_id, kind}) immediately — poll it with "
+            "Enqueue a library-WIDE mod-refresh job: re-runs the engine's own "
+            "downloader for every local library mod, honouring any pin — a "
+            "no-op transfer for anything already current, a real download "
+            "otherwise. Side effect: writes to the mod disk cache. 409 while "
+            "any server is running or the free-space guard trips. Returns the "
+            "enqueued job ({job_id, kind}) immediately — poll it with "
             "wait_for_job(job_id)."
         ),
         confirm=True,

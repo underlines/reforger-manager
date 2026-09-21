@@ -479,18 +479,6 @@ export function ModsPanel({
         </Button>
         <Button
           size="sm"
-          variant="outline"
-          disabled={Boolean(action)}
-          onClick={() =>
-            run("update-check", () =>
-              api(`/api/servers/${id}/mods/update/check`, { method: "POST" }),
-            )
-          }
-        >
-          {action === "update-check" ? "Checking..." : "Check updates"}
-        </Button>
-        <Button
-          size="sm"
           disabled={Boolean(action)}
           onClick={() =>
             run("update-apply", () =>
@@ -498,7 +486,7 @@ export function ModsPanel({
             )
           }
         >
-          {action === "update-apply" ? "Queueing..." : "Apply updates"}
+          {action === "update-apply" ? "Queueing..." : "Update mods"}
         </Button>
         <Button size="sm" variant="outline" onClick={() => preflight.refetch()}>
           Refresh pre-flight
