@@ -29,6 +29,7 @@ def _out(row) -> SettingsOut:
         nightly_check_enabled=row.nightly_check_enabled,
         nightly_check_hour=row.nightly_check_hour,
         log_spam_patterns=list(row.log_spam_patterns or []),
+        default_scenarios=list(row.default_scenarios or []),
     )
 
 
@@ -61,6 +62,8 @@ async def update_settings(
         row.nightly_check_hour = body.nightly_check_hour
     if body.log_spam_patterns is not None:
         row.log_spam_patterns = list(body.log_spam_patterns)
+    if body.default_scenarios is not None:
+        row.default_scenarios = [s.model_dump() for s in body.default_scenarios]
     await session.commit()
 
     if patterns_changed:

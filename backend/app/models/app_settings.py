@@ -23,3 +23,6 @@ class AppSettings(Base, TimestampMixin):
     nightly_check_hour: Mapped[int] = mapped_column(Integer, default=3)
     # Lowercase substring patterns matched against log lines by logview.
     log_spam_patterns: Mapped[list | None] = mapped_column(JSONVariant)
+    # [{"game_id": str, "name": str}, ...] offered by the ScenarioField picker
+    # regardless of a definition's mods (S6 default scenarios).
+    default_scenarios: Mapped[list | None] = mapped_column(JSONVariant)

@@ -1,6 +1,7 @@
 import { PageHeading } from "../components/PageHeading";
 import { AppearanceCard } from "../components/settings/AppearanceCard";
 import { BackupCard } from "../components/settings/BackupCard";
+import { DefaultScenariosCard } from "../components/settings/DefaultScenariosCard";
 import { EngineCard } from "../components/settings/EngineCard";
 import { HealthCard } from "../components/settings/HealthCard";
 import { McpTokensCard } from "../components/settings/McpTokensCard";
@@ -25,6 +26,7 @@ export function SettingsPage() {
         <EngineCard />
         <HealthCard />
         <SpamPatternsCard />
+        <DefaultScenariosCard />
         <BackupCard />
       </div>
     </>

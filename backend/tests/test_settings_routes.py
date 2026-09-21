@@ -20,7 +20,7 @@ from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.app_settings import invalidate_spam_cache
+from app.core.app_settings import DEFAULT_SCENARIOS, invalidate_spam_cache
 from app.core.config import settings as app_config
 from app.core.db import Base, get_session
 from app.core.security import get_current_user, hash_password, verify_password
@@ -103,6 +103,7 @@ class SettingsRouteTests(_RouteFixture, unittest.IsolatedAsyncioTestCase):
                 "nightly_check_enabled": app_config.nightly_check_enabled,
                 "nightly_check_hour": app_config.nightly_check_hour,
                 "log_spam_patterns": ["thermalprofiledefault.conf"],
+                "default_scenarios": list(DEFAULT_SCENARIOS),
             },
         )
         async with self.sessions() as session:
@@ -111,6 +112,47 @@ class SettingsRouteTests(_RouteFixture, unittest.IsolatedAsyncioTestCase):
             self.assertEqual(row.nightly_check_enabled, app_config.nightly_check_enabled)
             self.assertEqual(row.nightly_check_hour, app_config.nightly_check_hour)
             self.assertEqual(row.log_spam_patterns, ["thermalprofiledefault.conf"])
+            self.assertEqual(row.default_scenarios, list(DEFAULT_SCENARIOS))
+
+    async def test_existing_row_with_null_default_scenarios_is_backfilled(self) -> None:
+        """Simulates create_all self-heal adding the column to a pre-existing row:
+        the seeding branch in get_app_settings is skipped (row is not None), so
+        the backfill has to happen on the ``elif row.default_scenarios is None``
+        path instead."""
+        async with self.sessions() as session:
+            session.add(
+                AppSettings(
+                    id=APP_SETTINGS_SINGLETON_ID,
+                    nightly_check_enabled=False,
+                    nightly_check_hour=3,
+                    log_spam_patterns=["thermalprofiledefault.conf"],
+                )
+            )
+            await session.commit()
+
+        response = await self.client.get("/api/settings")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["default_scenarios"], list(DEFAULT_SCENARIOS))
+        async with self.sessions() as session:
+            row = await session.get(AppSettings, APP_SETTINGS_SINGLETON_ID)
+            self.assertEqual(row.default_scenarios, list(DEFAULT_SCENARIOS))
+
+    async def test_patch_default_scenarios_replaces_the_list(self) -> None:
+        custom = [{"game_id": "{AAAA}Missions/custom.conf", "name": "Custom"}]
+        response = await self.client.patch("/api/settings", json={"default_scenarios": custom})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["default_scenarios"], custom)
+        async with self.sessions() as session:
+            row = await session.get(AppSettings, APP_SETTINGS_SINGLETON_ID)
+            self.assertEqual(row.default_scenarios, custom)
+
+        # An explicit empty list is a deliberate "no defaults" choice, not the
+        # same as an unset column, and must NOT bounce back to the built-in list.
+        response = await self.client.patch("/api/settings", json={"default_scenarios": []})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["default_scenarios"], [])
 
     async def test_fresh_row_keeps_default_spam_pattern_case_insensitive(self) -> None:
         await self.client.get("/api/settings")  # seeds the singleton row

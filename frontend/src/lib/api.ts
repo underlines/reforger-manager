@@ -134,10 +134,12 @@ export type Player = {
 };
 export type Ban = { ban_id: string; uid: string; duration: string };
 export type BansResponse = { bans: Ban[]; raw?: string; page: number };
+export type ScenarioDefault = { game_id: string; name: string };
 export type AppSettings = {
   nightly_check_enabled: boolean;
   nightly_check_hour: number;
   log_spam_patterns: string[];
+  default_scenarios: ScenarioDefault[];
 };
 export type Stats = { current: Record<string, unknown>; history: Array<Record<string, unknown>> };
 export type FileEntry = {

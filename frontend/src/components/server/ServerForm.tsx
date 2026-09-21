@@ -5,6 +5,7 @@ import { cn } from "../../lib/utils";
 import {
   api,
   apiVoid,
+  type AppSettings,
   type ConfigResponse,
   type DetailServer,
   type Server,
@@ -285,12 +286,17 @@ type ScenarioResolveResponse = {
 };
 
 /**
- * Scenario picker (S6). Fed by the definition's CURRENT mod GUIDs (read from
- * the react-query `["server", id]` cache the page already fetched — the
- * component's own signature stays `{value, onChange}`), resolved via
- * POST /api/scenarios/resolve. A free-text id beside the dropdown ALWAYS wins
- * when non-empty; the dropdown only writes when the free text is empty. In
- * create mode there are no mods yet, so just the free-text input renders.
+ * Scenario picker (S6). Two sources feed the dropdown: the operator-configured
+ * default scenarios (Settings → Default Scenarios, GET /api/settings — always
+ * available, even in create mode with no mods yet) and the definition's CURRENT
+ * mod GUIDs (read from the react-query `["server", id]` cache the page already
+ * fetched — the component's own signature stays `{value, onChange}`), resolved
+ * via POST /api/scenarios/resolve, grouped one `<optgroup>` per mod (plus one
+ * for the defaults) so scenarios from different mods don't run together. The
+ * dropdown and the free-text box both just write `value` — picking an option
+ * overwrites whatever is in the text box, and the dropdown stays enabled (and
+ * shows the matching entry highlighted) even when the current value came from
+ * free text. With neither source available, just the free-text input renders.
  */
 export function ScenarioField({
   value,
@@ -319,12 +325,33 @@ export function ScenarioField({
     enabled: sortedGuids.length > 0,
     placeholderData: keepPreviousData,
   });
+  const settings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api<AppSettings>("/api/settings"),
+  });
 
   const scenarios = resolve.data?.scenarios ?? [];
+  const defaults = settings.data?.default_scenarios ?? [];
   const failedCount = resolve.data?.failed.length ?? 0;
-  const freeText = value.trim().length > 0;
 
-  if (sortedGuids.length === 0) {
+  // One group per mod (in first-seen order) so scenarios from different mods
+  // are visually separated instead of dumped into one flat list.
+  const modScenarioGroups = useMemo(() => {
+    const order: string[] = [];
+    const byMod = new Map<string, { modName: string | null; scenarios: ResolvedScenario[] }>();
+    for (const scenario of scenarios) {
+      if (!byMod.has(scenario.mod_guid)) {
+        order.push(scenario.mod_guid);
+        byMod.set(scenario.mod_guid, { modName: scenario.mod_name, scenarios: [] });
+      }
+      byMod.get(scenario.mod_guid)!.scenarios.push(scenario);
+    }
+    return order.map((modGuid) => ({ modGuid, ...byMod.get(modGuid)! }));
+  }, [scenarios]);
+  const loading = settings.isLoading || (sortedGuids.length > 0 && resolve.isLoading);
+  const hasOptions = defaults.length > 0 || scenarios.length > 0;
+
+  if (!hasOptions && !loading) {
     return (
       <label className="block space-y-1 text-xs text-stone-300">
         <span>Scenario id</span>
@@ -334,7 +361,8 @@ export function ScenarioField({
           placeholder="{ECC61978EDCC2B5A}Missions/23_Campaign.conf"
         />
         <span className="block text-[10px] text-stone-500">
-          Paste a scenario id. Add mods first to pick from their scenarios.
+          Paste a scenario id. Add mods, or configure default scenarios in Settings, to
+          pick from a list.
         </span>
       </label>
     );
@@ -342,33 +370,40 @@ export function ScenarioField({
 
   return (
     <div className="grid gap-2">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3">
         <label className="block space-y-1 text-xs text-stone-300">
-          <span>Scenario (from the definition's mods)</span>
+          <span>Scenario</span>
           <select
-            className="h-10 w-full border border-stone-600 bg-stone-950 px-3 text-sm text-stone-100 disabled:text-stone-500"
-            value={freeText ? "" : value}
-            disabled={freeText}
-            onChange={(event) => {
-              if (value.trim() === "") onChange(event.target.value);
-            }}
+            className="h-10 w-full border border-stone-600 bg-stone-950 px-3 text-sm text-stone-100"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
           >
-            <option value="">
-              {resolve.isLoading ? "Loading scenarios..." : "Select a scenario..."}
-            </option>
-            {scenarios.map((scenario) => (
-              <option
-                key={`${scenario.mod_guid}:${scenario.game_id}`}
-                value={scenario.game_id}
-              >
-                {scenario.name ?? scenario.game_id}
-                {scenario.mod_name ? ` — ${scenario.mod_name}` : ""}
-              </option>
+            <option value="">{loading ? "Loading scenarios..." : "Select a scenario..."}</option>
+            {defaults.length > 0 && (
+              <optgroup label="Official scenarios">
+                {defaults.map((scenario) => (
+                  <option key={`default:${scenario.game_id}`} value={scenario.game_id}>
+                    {scenario.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {modScenarioGroups.map((group) => (
+              <optgroup key={group.modGuid} label={group.modName ?? group.modGuid}>
+                {group.scenarios.map((scenario) => (
+                  <option
+                    key={`${scenario.mod_guid}:${scenario.game_id}`}
+                    value={scenario.game_id}
+                  >
+                    {scenario.name ?? scenario.game_id}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>
         <label className="block space-y-1 text-xs text-stone-300">
-          <span>Scenario id (free text overrides the dropdown)</span>
+          <span>Scenario id (or paste a custom one)</span>
           <Input
             value={value}
             onChange={(event) => onChange(event.target.value)}

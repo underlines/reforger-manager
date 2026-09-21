@@ -5,10 +5,16 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class ScenarioDefault(BaseModel):
+    game_id: str
+    name: str
+
+
 class SettingsOut(BaseModel):
     nightly_check_enabled: bool
     nightly_check_hour: int
     log_spam_patterns: list[str]
+    default_scenarios: list[ScenarioDefault]
 
 
 class SettingsUpdate(BaseModel):
@@ -17,3 +23,4 @@ class SettingsUpdate(BaseModel):
     nightly_check_enabled: bool | None = None
     nightly_check_hour: int | None = Field(default=None, ge=0, le=23)
     log_spam_patterns: list[str] | None = None
+    default_scenarios: list[ScenarioDefault] | None = None
