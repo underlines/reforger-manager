@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Empty } from "../Empty";
 import { Button, Input } from "../ui";
+import { WorkshopLink } from "./WorkshopLink";
 import { api } from "../../lib/api";
 
 /* ------------------------------------------------------------------ *
@@ -193,8 +195,15 @@ function PickerRow({
     <li className={showDeps ? "grid gap-2 px-3 py-2" : "flex flex-wrap items-center gap-3 px-3 py-2"}>
       <div className="flex flex-wrap items-center gap-3">
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-display text-sm uppercase tracking-wide text-stone-100">
-            {mod.name ?? mod.guid}
+          <span className="flex items-center gap-1.5">
+            <Link
+              to={`/mods/${mod.guid}`}
+              className="min-w-0 truncate font-display text-sm uppercase tracking-wide text-stone-100 hover:text-amber-400"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {mod.name ?? mod.guid}
+            </Link>
+            <WorkshopLink guid={mod.guid} />
           </span>
           <span className="flex flex-wrap gap-x-3 text-[10px] text-stone-500">
             <span className="font-mono">{mod.guid}</span>

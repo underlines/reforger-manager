@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "../ui";
+import { WorkshopLink } from "./WorkshopLink";
 import { cn } from "../../lib/utils";
 import type { ModGraph, ModGraphNode, TreeNode } from "../../lib/modGraph";
 
@@ -41,6 +42,7 @@ function ModTreeRowContent({
     return (
       <>
         <span className="min-w-0 truncate font-mono text-stone-500">{guid}</span>
+        <WorkshopLink guid={guid} />
         <Badge tone="warn">unresolved</Badge>
       </>
     );
@@ -63,6 +65,7 @@ function ModTreeRowContent({
   return (
     <>
       {nameNode}
+      {!node.is_builtin && <WorkshopLink guid={guid} />}
       {node.is_builtin ? (
         <Badge tone="neutral">engine</Badge>
       ) : (

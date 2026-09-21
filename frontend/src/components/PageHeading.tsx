@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export function PageHeading({ title, detail, actions }: { title: string; detail: string; actions?: ReactNode }) {
+export function PageHeading({ title, detail, actions }: { title: ReactNode; detail: string; actions?: ReactNode }) {
   return (
     <div className="page-heading">
       <div>

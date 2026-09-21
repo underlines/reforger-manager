@@ -17,6 +17,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { type ReactNode } from "react";
 import { cn } from "../../lib/utils";
+import { WorkshopLink } from "./WorkshopLink";
 
 /**
  * Minimal shape a row needs to be dragged and identified. Anything with a
@@ -145,8 +146,11 @@ function SortableModRow<T extends SortableRow>({
         {index + 1}
       </span>
       <span className="min-w-0 flex-1 space-y-1">
-        <span className="block truncate font-display text-sm uppercase tracking-wide text-stone-100">
-          {renderName ? renderName(item) : item.name ?? item.guid}
+        <span className="flex items-center gap-1.5">
+          <span className="min-w-0 truncate font-display text-sm uppercase tracking-wide text-stone-100">
+            {renderName ? renderName(item) : item.name ?? item.guid}
+          </span>
+          <WorkshopLink guid={item.guid} />
         </span>
         <span className="block truncate font-mono text-[10px] text-stone-500">{item.guid}</span>
         {renderMeta?.(item)}

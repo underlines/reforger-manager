@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeading } from "../components/PageHeading";
 import { LocalStateBadge } from "../components/mods/LocalStateBadge";
 import { ModTree } from "../components/mods/ModTree";
+import { WorkshopLink } from "../components/mods/WorkshopLink";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
 import { api, apiVoid, type Server } from "../lib/api";
 import { buildFlat, buildNested, buildReverse, useModGraph, type ModGraph } from "../lib/modGraph";
@@ -362,7 +363,12 @@ export function ModDetailPage() {
   return (
     <>
       <PageHeading
-        title={detail.name ?? detail.guid}
+        title={
+          <span className="inline-flex items-center gap-2">
+            {detail.name ?? detail.guid}
+            <WorkshopLink guid={detail.guid} size={16} />
+          </span>
+        }
         detail={`${detail.guid} · Workshop availability, version history, dependencies, and usage.`}
         actions={
           <>

@@ -5,6 +5,7 @@ import { Empty } from "../components/Empty";
 import { FreshnessPill } from "../components/mods/FreshnessPill";
 import { LocalStateBadge } from "../components/mods/LocalStateBadge";
 import { ModTree } from "../components/mods/ModTree";
+import { WorkshopLink } from "../components/mods/WorkshopLink";
 import { PageHeading } from "../components/PageHeading";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
 import { api, apiVoid, ApiError } from "../lib/api";
@@ -717,6 +718,7 @@ export function ModsPage() {
                               >
                                 {mod.name ?? mod.guid}
                               </button>
+                              <WorkshopLink guid={mod.guid} />
                               {mod.stale_pin && <Badge tone="bad">Stale pin</Badge>}
                               {mod.pinned_version && !mod.stale_pin && (
                                 <Badge tone="neutral">Pinned {mod.pinned_version}</Badge>

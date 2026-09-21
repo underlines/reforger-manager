@@ -6,6 +6,7 @@ import { SortableModList, type SortableRow } from "../mods/SortableModList";
 import { ModTree } from "../mods/ModTree";
 import { ModLibraryPicker } from "../mods/ModLibraryPicker";
 import { LocalStateBadge } from "../mods/LocalStateBadge";
+import { WorkshopLink } from "../mods/WorkshopLink";
 import { Badge, Button, Dialog, Input } from "../ui";
 import {
   api,
@@ -534,9 +535,12 @@ export function ModsPanel({
               <div className="list mt-2">
                 {preflightGroups.order.map((guid) => (
                   <div key={guid} className="py-2">
-                    <Link to={`/mods/${guid}`} className="hover:text-amber-400">
-                      {preflightGroups.nameByGuid.get(guid) ?? guid}
-                    </Link>
+                    <span className="inline-flex items-center gap-1.5">
+                      <Link to={`/mods/${guid}`} className="hover:text-amber-400">
+                        {preflightGroups.nameByGuid.get(guid) ?? guid}
+                      </Link>
+                      <WorkshopLink guid={guid} />
+                    </span>
                     <div className="list mt-1">
                       {(preflightGroups.byGuid.get(guid) ?? []).map((check, index) => (
                         <div className="row" key={`${check.name}-${index}`}>
@@ -598,10 +602,11 @@ export function ModsPanel({
                   <div className="list mt-1">
                     {notCachedResolved.map((mod) => (
                       <div className="row" key={mod.guid}>
-                        <span className="row-main">
+                        <span className="row-main inline-flex items-center gap-1.5">
                           <Link to={`/mods/${mod.guid}`} className="hover:text-amber-400">
                             {mod.name ?? mod.guid}
                           </Link>
+                          <WorkshopLink guid={mod.guid} />
                         </span>
                         <LocalStateBadge
                           guid={mod.guid}
@@ -1041,6 +1046,7 @@ function AssignedModExpanded({
             >
               {row.mod_name ?? row.mod_guid}
             </Link>
+            <WorkshopLink guid={row.mod_guid} />
             <Badge tone="neutral">pick</Badge>
             {!row.enabled && <Badge tone="neutral">Disabled</Badge>}
             {row.pinned_version && <Badge tone="warn">Pinned {row.pinned_version}</Badge>}

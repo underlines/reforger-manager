@@ -7,6 +7,7 @@ import { ModLibraryPicker } from "../components/mods/ModLibraryPicker";
 import { LocalStateBadge } from "../components/mods/LocalStateBadge";
 import { ModTree } from "../components/mods/ModTree";
 import { SortableModList } from "../components/mods/SortableModList";
+import { WorkshopLink } from "../components/mods/WorkshopLink";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
 import { api, ApiError, apiVoid, type Modpack, type Server } from "../lib/api";
 import { buildNested, coverageFromGraph, useModGraph, type ModGraph } from "../lib/modGraph";
@@ -405,6 +406,15 @@ export function ModpacksPage() {
                       <SortableModList
                         items={topLevel}
                         onReorder={reorderVisible}
+                        renderName={(item) => (
+                          <Link
+                            to={`/mods/${item.mod_guid}`}
+                            className="hover:text-amber-400"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {item.name ?? item.mod_guid}
+                          </Link>
+                        )}
                         renderActions={(item) => {
                           const open = expandedRows.has(item.mod_guid);
                           return (
@@ -766,6 +776,7 @@ function PackItemExpanded({
           >
             {row.name ?? row.mod_guid}
           </Link>
+          <WorkshopLink guid={row.mod_guid} />
           <Badge tone="neutral">pick</Badge>
           <Button
             size="sm"
