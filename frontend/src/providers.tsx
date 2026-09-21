@@ -23,12 +23,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
   const logout = () => {
-    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
     setAccessToken(null);
     setUser(null);
   };
   useEffect(() => {
-    const token = sessionStorage.getItem(TOKEN_KEY);
+    const token = localStorage.getItem(TOKEN_KEY);
     if (!token) {
       setReady(true);
       return;
@@ -40,9 +40,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     window.addEventListener("auth:expired", logout);
     return () => window.removeEventListener("auth:expired", logout);
   });
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === TOKEN_KEY && !event.newValue) logout();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   const login = async (username: string, password: string) => {
     const result = await apiClient.login(username, password);
-    sessionStorage.setItem(TOKEN_KEY, result.access_token);
+    localStorage.setItem(TOKEN_KEY, result.access_token);
     setAccessToken(result.access_token);
     setUser(await apiClient.me());
   };
