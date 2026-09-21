@@ -37,6 +37,7 @@ from ..core.events import broadcaster, server_console_channel
 from ..core.jobs import job_manager
 from ..core.security import get_current_user
 from ..models import Mod, Server, ServerMod
+from ..mods.downloader import MOD_DOWNLOAD_JOB_KIND, enqueue_download_job
 from ..mods.logview import (
     current_log,
     is_spam_line,
@@ -55,6 +56,7 @@ from ..schemas.server import (
     ServerCloneIn,
     ServerConfigOut,
     ServerCreate,
+    ServerModsReadyOut,
     RconCommandIn,
     ScheduleRestartIn,
     ServerModPinIn,
@@ -420,6 +422,53 @@ async def apply_server_updates(server_id: int, session: AsyncSession = Depends(g
     await guard_refresh_scope(session, server_id)
     job_id = await job_manager.enqueue(MOD_UPDATE_APPLY_JOB_KIND, params={"scope": server_id})
     return JobEnqueuedOut(job_id=job_id, kind=MOD_UPDATE_APPLY_JOB_KIND)
+
+
+@router.post(
+    "/{server_id}/mods/ensure-ready",
+    response_model=ServerModsReadyOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=authed,
+)
+async def ensure_server_mods_ready(
+    server_id: int, session: AsyncSession = Depends(get_session)
+) -> ServerModsReadyOut:
+    """Resolve what a real server start would actually request and enqueue
+    whichever of it is not yet locally ready (S14).
+
+    ``resolved_mod_entries`` is the single source of truth for the mod set a
+    start writes to ``config.json`` -- dependencies are never re-resolved here,
+    so this can never disagree with what a start actually needs. The "missing"
+    predicate mirrors ``mods.downloader.ensure_mods_ready``: no library row at
+    all, not marked local, or pinned to a version the recorded
+    ``installed_version`` does not match.
+    """
+    server = await _load(session, server_id)
+    entries = await resolved_mod_entries(session, server)
+    if not entries:
+        return ServerModsReadyOut(job_id=None, kind=None, missing=[])
+
+    rows = (
+        await session.execute(
+            select(Mod).where(Mod.guid.in_([entry.mod_id for entry in entries]))
+        )
+    ).scalars().all()
+    by_guid = {row.guid.upper(): row for row in rows}
+
+    missing_entries = [
+        entry
+        for entry in entries
+        if (row := by_guid.get(entry.mod_id.upper())) is None
+        or not row.is_local
+        or (entry.version and row.installed_version != entry.version)
+    ]
+    if not missing_entries:
+        return ServerModsReadyOut(job_id=None, kind=None, missing=[])
+
+    missing_guids = [entry.mod_id for entry in missing_entries]
+    versions = {entry.mod_id: entry.version for entry in missing_entries if entry.version}
+    job_id = await enqueue_download_job(session, missing_guids, versions=versions)
+    return ServerModsReadyOut(job_id=job_id, kind=MOD_DOWNLOAD_JOB_KIND, missing=missing_guids)
 
 
 @router.post("/{server_id}/mods/{guid}/pin", response_model=ServerOut, dependencies=authed)

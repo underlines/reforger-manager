@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Badge, Button } from "../ui";
 import { api, type Server } from "../../lib/api";
+import { startServerReady } from "../../lib/serverStart";
 
 export function ServerRow({ server, runningServer }: { server: Server; runningServer?: Server }) {
   const queryClient = useQueryClient();
@@ -29,7 +30,7 @@ export function ServerRow({ server, runningServer }: { server: Server; runningSe
         if (!window.confirm(`Stop '${runningServer.name}' and start '${server.name}'?`)) return;
         await api(`/api/servers/${runningServer.id}/stop`, { method: "POST" });
       }
-      await api(`/api/servers/${server.id}/start`, { method: "POST" });
+      await startServerReady(server.id);
     },
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: ["servers"] });

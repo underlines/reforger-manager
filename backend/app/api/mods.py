@@ -21,7 +21,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..core.config import settings
 from ..core.db import get_session
 from ..core.jobs import job_manager
 from ..core.security import get_current_user
@@ -35,8 +34,8 @@ from ..models import (
     Server,
     ServerMod,
 )
-from ..mods.downloader import MOD_DOWNLOAD_JOB_KIND
-from ..mods.freespace import check_free_space, ensure_sizes, estimate_download_bytes, guard_refresh_scope
+from ..mods.downloader import MOD_DOWNLOAD_JOB_KIND, enqueue_download_job
+from ..mods.freespace import guard_refresh_scope
 from ..mods.pinning import CurrentEngineBuildMissing, PinRecordNotFound, pin_mod, unpin_mod
 from ..mods.resolve import ENGINE_BUILTIN_GUIDS, resolve_dependencies
 from ..mods.scanner import addons_root, resolve_addon_dir
@@ -157,11 +156,21 @@ async def _mod_references(
 
 
 async def _delete_block_detail(
-    session: AsyncSession, guid: str, closure_owners: dict[str, set[str]]
+    session: AsyncSession,
+    guid: str,
+    closure_owners: dict[str, set[str]],
+    *,
+    dependency_only: bool = False,
 ) -> str:
-    """A specific 'why this delete is refused' message: the servers, modpacks,
-    and parent mods that keep ``guid`` alive."""
-    servers, packs, _required_by = await _mod_references(session, guid)
+    """A specific 'why this delete is refused' message.
+
+    By default this names the servers, modpacks, and parent mods that keep
+    ``guid`` alive. When ``dependency_only`` is set, the caller has already
+    established the block can only be the pure-dependency case (``guid`` is
+    not directly referenced, only reachable via another mod's resolved
+    dependency closure) — the servers/modpacks clause is dropped since it
+    would be misleading copy on that path.
+    """
     parents = sorted(owner for owner in closure_owners.get(guid, set()) if owner != guid)
     parent_labels: list[str] = []
     if parents:
@@ -174,6 +183,15 @@ async def _delete_block_detail(
         )
         parent_labels = [names.get(p) or p for p in parents]
 
+    if dependency_only:
+        where = (
+            "a dependency of " + ", ".join(parent_labels)
+            if parent_labels
+            else "a resolved dependency"
+        )
+        return f"mod {guid} cannot be deleted — still referenced by {where}."
+
+    servers, packs, _required_by = await _mod_references(session, guid)
     parts: list[str] = []
     if servers:
         parts.append("server definition(s) " + ", ".join(servers))
@@ -356,22 +374,15 @@ async def unpin_library_mod(
 async def _enqueue_mod_download(
     session: AsyncSession, guids: list[str], versions: dict[str, str] | None = None
 ) -> JobEnqueuedOut:
-    """Shared batch-download path (S5): free-space guard over every requested
-    mod, then **one** ``mod_download`` job for the whole list — one job, one
-    engine spawn, regardless of how many GUIDs are requested."""
+    """Shared batch-download path (S5): 404 on any unknown guid -- this route's
+    own boundary -- then hand off to the shared free-space-guarded enqueue
+    helper (S14): one job, one engine spawn, regardless of how many GUIDs are
+    requested."""
     upper_guids = [g.upper() for g in guids]
-    mods: list[Mod] = []
     for guid in upper_guids:
-        mod = await session.get(Mod, guid)
-        if mod is None:
+        if await session.get(Mod, guid) is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"mod not found: {guid}")
-        mods.append(mod)
-    await ensure_sizes(session, mods)
-    projected, _unknown = estimate_download_bytes(mods)
-    check_free_space(settings.mods_dir, projected)
-    job_id = await job_manager.enqueue(
-        MOD_DOWNLOAD_JOB_KIND, params={"guids": upper_guids, "versions": versions or {}}
-    )
+    job_id = await enqueue_download_job(session, upper_guids, versions)
     return JobEnqueuedOut(job_id=job_id, kind=MOD_DOWNLOAD_JOB_KIND)
 
 
@@ -399,12 +410,21 @@ async def download_mod(
 async def delete_local_mod(
     guid: str, session: AsyncSession = Depends(get_session)
 ) -> ModOut:
-    """Delete a mod's on-disk addon dir and clear ``is_local`` (S12).
+    """Delete a mod's on-disk addon dir and clear ``is_local`` (S12; guard
+    relaxed S14).
+
+    Soft-delete is now allowed while the mod is directly assigned to a server
+    or modpack — the assignment itself is untouched (this route never touches
+    ``ServerMod``/``ModpackItem``), only the cached files go, and a later
+    start/download re-fetches them. It is refused only when the mod is kept
+    alive purely as another mod's resolved dependency — i.e. not itself
+    directly referenced — since removing those files would silently break
+    whatever depends on them.
 
     The orphan condition is re-checked server-side because the client's list may
-    be stale; deletion is refused while any server runs, and the addon path must
-    resolve to a real directory inside ``scanner.addons_root()`` — a computed
-    path outside it is never removed.
+    be stale; deletion is also refused while any server runs, and the addon path
+    must resolve to a real directory inside ``scanner.addons_root()`` — a
+    computed path outside it is never removed.
     """
     guid = guid.upper()
     if supervisor.is_running():
@@ -419,10 +439,10 @@ async def delete_local_mod(
         raise HTTPException(status.HTTP_409_CONFLICT, "mod has no on-disk files to remove")
 
     directly_referenced, closure_owners = await orphan_reference_sets(session)
-    if guid in directly_referenced or guid in closure_owners:
+    if guid not in directly_referenced and guid in closure_owners:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            await _delete_block_detail(session, guid, closure_owners),
+            await _delete_block_detail(session, guid, closure_owners, dependency_only=True),
         )
 
     root = addons_root().resolve()

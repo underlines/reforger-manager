@@ -5,6 +5,7 @@ import { Empty } from "../Empty";
 import { SortableModList, type SortableRow } from "../mods/SortableModList";
 import { ModTree } from "../mods/ModTree";
 import { ModLibraryPicker } from "../mods/ModLibraryPicker";
+import { LocalStateBadge } from "../mods/LocalStateBadge";
 import { Badge, Button, Dialog, Input } from "../ui";
 import {
   api,
@@ -160,6 +161,15 @@ export function ModsPanel({
     }
     return { nameByGuid, order, byGuid, other };
   }, [preflight.data]);
+
+  // Not-cached rows derive straight from the raw resolved_mods entries.
+  // preflightGroups keeps only {guid, name} and only for mods that carry a
+  // flagged check, so a healthy mod that is merely not on disk yet would have
+  // no group there to hang a badge row on.
+  const notCachedResolved = useMemo(
+    () => (preflight.data?.resolved_mods ?? []).filter((mod) => mod.local === false),
+    [preflight.data],
+  );
 
   /* --------------------------- working copy --------------------------- */
 
@@ -582,6 +592,27 @@ export function ModsPanel({
                   </div>
                 )}
               </div>
+              {notCachedResolved.length > 0 && (
+                <div className="py-2">
+                  <strong>Not cached locally</strong>
+                  <div className="list mt-1">
+                    {notCachedResolved.map((mod) => (
+                      <div className="row" key={mod.guid}>
+                        <span className="row-main">
+                          <Link to={`/mods/${mod.guid}`} className="hover:text-amber-400">
+                            {mod.name ?? mod.guid}
+                          </Link>
+                        </span>
+                        <LocalStateBadge
+                          guid={mod.guid}
+                          isLocal={mod.local === true}
+                          onDone={() => void preflight.refetch()}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )
         )}

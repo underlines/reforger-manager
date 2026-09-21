@@ -72,6 +72,11 @@ export type Job = {
   error: string | null;
   created_at: string | null;
 };
+export type ServerModsReadyOut = {
+  job_id: number | null;
+  kind: string | null;
+  missing: string[];
+};
 export type DetailServer = Server & {
   config_revision: number;
   pid: number | null;
@@ -115,7 +120,7 @@ export type Preflight = {
     fix?: string;
     guid?: string | null;
   }>;
-  resolved_mods: Array<{ guid: string; name: string | null; state?: string; version?: string | null }>;
+  resolved_mods: Array<{ guid: string; name: string | null; state?: string; version?: string | null; local?: boolean }>;
 };
 export type LogLine = { text: string; severity: string | null; is_spam: boolean; line_number?: number };
 export type LogResponse = { lines: LogLine[]; truncated?: boolean; scanned_bytes?: number };

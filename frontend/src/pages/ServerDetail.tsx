@@ -11,6 +11,7 @@ import { RconPanel } from "../components/server/RconPanel";
 import { SavesPanel } from "../components/server/SavesPanel";
 import { Badge, Button, Card, CardContent, Dialog, Input } from "../components/ui";
 import { api, apiClient, type DetailServer, type Server } from "../lib/api";
+import { startServerReady } from "../lib/serverStart";
 
 const tabs = ["Config", "Mods", "Files", "Saves", "Console", "RCON", "History"] as const;
 type Tab = (typeof tabs)[number];
@@ -115,7 +116,9 @@ export function ServerDetailPage() {
               disabled={Boolean(action)}
               onClick={() =>
                 run(server.is_running ? "stop" : "start", () =>
-                  api(`/api/servers/${id}/${server.is_running ? "stop" : "start"}`, { method: "POST" }),
+                  server.is_running
+                    ? api(`/api/servers/${id}/stop`, { method: "POST" })
+                    : startServerReady(Number(id)),
                 )
               }
             >

@@ -20,8 +20,10 @@ from sqlalchemy import select
 
 from ..core.config import settings
 from ..core.db import SessionLocal
+from ..core.jobs import job_manager
 from ..models import Mod
 from ..servers.supervisor import supervisor
+from .freespace import check_free_space, ensure_sizes, estimate_download_bytes
 from .resolve import ENGINE_BUILTIN_GUIDS, resolve_dependencies
 from .scanner import scan_all
 
@@ -423,6 +425,33 @@ async def expected_closure(ctx: "JobContext | None", guids: list[str]) -> set[st
         return set(requested)
     closure = {node.guid.upper() for node in tree.nodes} - set(ENGINE_BUILTIN_GUIDS)
     return closure | requested
+
+
+async def enqueue_download_job(
+    session: "AsyncSession", guids: list[str], versions: dict[str, str] | None = None
+) -> int:
+    """Free-space guard over every requested mod, then **one** ``mod_download``
+    job for the whole list (S14: extracted out of ``api/mods.py``'s
+    ``_enqueue_mod_download`` so ``POST /servers/{id}/mods/ensure-ready`` can
+    share it too).
+
+    Existence is deliberately not this helper's concern -- a 404 on an unknown
+    guid is the caller's boundary, not this one's. ``ensure-ready`` calls in
+    here with guids that may have no ``Mod`` row at all (a dependency-only
+    entry ``resolved_mod_entries`` resolved purely from the on-disk/dependency
+    tree, never locally enriched); such a guid simply contributes nothing to
+    the size projection below rather than raising.
+    """
+    upper_guids = [g.upper() for g in guids]
+    mods = (
+        await session.execute(select(Mod).where(Mod.guid.in_(upper_guids)))
+    ).scalars().all()
+    await ensure_sizes(session, mods)
+    projected, _unknown = estimate_download_bytes(mods)
+    check_free_space(settings.mods_dir, projected)
+    return await job_manager.enqueue(
+        MOD_DOWNLOAD_JOB_KIND, params={"guids": upper_guids, "versions": versions or {}}
+    )
 
 
 async def ensure_mods_ready(

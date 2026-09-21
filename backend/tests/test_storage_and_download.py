@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import httpx
 from fastapi import FastAPI
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.api import mods as mods_api
@@ -156,6 +157,63 @@ class StorageAndDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 409, response.text)
         self.enqueue_mock.assert_not_awaited()
 
+    # --------------------------------------------------- ensure-ready (S14)
+    async def test_ensure_ready_all_local_enqueues_nothing(self) -> None:
+        await self._seed_mod(GUID_A, size=1000, is_local=True)
+        await self._assign(GUID_A)
+
+        response = await self.client.post("/api/servers/1/mods/ensure-ready")
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json(), {"job_id": None, "kind": None, "missing": []})
+        self.enqueue_mock.assert_not_awaited()
+
+    async def test_ensure_ready_one_mod_not_local_is_missing(self) -> None:
+        await self._seed_mod(GUID_A, size=1000, is_local=False)
+        await self._assign(GUID_A)
+
+        response = await self.client.post("/api/servers/1/mods/ensure-ready")
+        self.assertEqual(response.status_code, 202, response.text)
+        data = response.json()
+        self.assertEqual(data["missing"], [GUID_A])
+        self.assertEqual(data["job_id"], 7)
+        self.assertEqual(data["kind"], JOB_KIND_DOWNLOAD)
+        kwargs = self.enqueue_mock.call_args.kwargs
+        self.assertEqual(kwargs["params"], {"guids": [GUID_A], "versions": {}})
+
+    async def test_ensure_ready_pinned_version_mismatch_carries_pin(self) -> None:
+        # A is local but installed at 1.0.0 while the server pins it to 2.0.0 --
+        # the mismatch alone must mark it missing, and the enqueued job must
+        # carry the *pinned* version, not the installed one or None.
+        async with self.sessions() as session:
+            session.add(Server(id=1, name="srv1"))
+            session.add(
+                Mod(guid=GUID_A, name="Mod A", size=1000, is_local=True, installed_version="1.0.0")
+            )
+            session.add(
+                ServerMod(
+                    server_id=1, mod_guid=GUID_A, load_order=0, enabled=True,
+                    pinned_version="2.0.0",
+                )
+            )
+            await session.commit()
+
+        response = await self.client.post("/api/servers/1/mods/ensure-ready")
+        self.assertEqual(response.status_code, 202, response.text)
+        data = response.json()
+        self.assertEqual(data["missing"], [GUID_A])
+        self.assertEqual(data["job_id"], 7)
+        kwargs = self.enqueue_mock.call_args.kwargs
+        self.assertEqual(kwargs["params"], {"guids": [GUID_A], "versions": {GUID_A: "2.0.0"}})
+
+    async def test_ensure_ready_refused_when_projected_exceeds_free_space(self) -> None:
+        await self._seed_mod(GUID_A, size=1000, is_local=False)
+        await self._assign(GUID_A)
+        usage = SimpleNamespace(free=100, total=1000, used=900)
+        with patch("shutil.disk_usage", return_value=usage):
+            response = await self.client.post("/api/servers/1/mods/ensure-ready")
+        self.assertEqual(response.status_code, 409, response.text)
+        self.enqueue_mock.assert_not_awaited()
+
     # ------------------------------------------------------- storage view (S12)
     async def test_storage_orphan_closure_rule(self) -> None:
         # A is assigned to a server and depends on B (dependency-only, is_local,
@@ -221,14 +279,44 @@ class StorageAndDownloadTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.delete(f"/api/mods/{GUID_A}/local")
         self.assertEqual(response.status_code, 400, response.text)
 
-    async def test_delete_local_409_when_directly_referenced(self) -> None:
+    async def test_delete_local_succeeds_when_directly_referenced(self) -> None:
+        # Direct assignment to a server no longer blocks the on-disk delete —
+        # only being kept alive *purely* as a transitive dependency does. The
+        # ServerMod row (the assignment itself) is untouched; only the cached
+        # files go, since delete_local_mod never writes to ServerMod.
         await self._seed_mod(GUID_A, size=100)
         await self._assign(GUID_A)
         self._make_addon_dir(GUID_A, size_bytes=100)
 
         response = await self.client.delete(f"/api/mods/{GUID_A}/local")
-        self.assertEqual(response.status_code, 409, response.text)
-        self.assertTrue((self.addons / f"Mod_{GUID_A}").exists())
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["is_local"])
+        self.assertFalse((self.addons / f"Mod_{GUID_A}").exists())
+
+        async with self.sessions() as session:
+            row = await session.get(Mod, GUID_A)
+            self.assertIsNotNone(row)
+            self.assertFalse(row.is_local)
+            server_mod = (
+                await session.execute(select(ServerMod).where(ServerMod.mod_guid == GUID_A))
+            ).scalar_one_or_none()
+            self.assertIsNotNone(server_mod)
+
+    async def test_delete_local_succeeds_when_also_a_dependency_elsewhere(self) -> None:
+        # A is directly assigned to server 1 AND a resolved dependency of C,
+        # which is assigned to server 2. A is in directly_referenced, so the
+        # delete must succeed regardless of the extra dependency edge onto it.
+        await self._seed_mod(GUID_A, size=100)
+        await self._seed_mod(GUID_C, size=10)
+        await self._assign(GUID_A, server_id=1)
+        await self._assign(GUID_C, server_id=2)
+        await self._depend(GUID_C, GUID_A)
+        self._make_addon_dir(GUID_A, size_bytes=100)
+
+        response = await self.client.delete(f"/api/mods/{GUID_A}/local")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["is_local"])
+        self.assertFalse((self.addons / f"Mod_{GUID_A}").exists())
 
     async def test_delete_local_409_for_kept_dependency(self) -> None:
         # B is only kept alive by the closure of assigned A — deleting it would
@@ -242,6 +330,10 @@ class StorageAndDownloadTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.delete(f"/api/mods/{GUID_B}/local")
         self.assertEqual(response.status_code, 409, response.text)
         self.assertTrue((self.addons / f"Mod_{GUID_B}").exists())
+        detail = response.json()["detail"]
+        self.assertIn("Mod A", detail)  # names the parent mod keeping it alive
+        self.assertNotIn("server", detail.lower())
+        self.assertNotIn("modpack", detail.lower())
 
     # ------------------------------------------------- DELETE /mods/{guid}
     async def test_delete_library_row_removes_unreferenced_nonlocal(self) -> None:

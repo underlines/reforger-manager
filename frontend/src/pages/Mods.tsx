@@ -3,6 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "
 import { Link } from "react-router-dom";
 import { Empty } from "../components/Empty";
 import { FreshnessPill } from "../components/mods/FreshnessPill";
+import { LocalStateBadge } from "../components/mods/LocalStateBadge";
 import { ModTree } from "../components/mods/ModTree";
 import { PageHeading } from "../components/PageHeading";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
@@ -304,7 +305,7 @@ export function ModsPage() {
   const removeLocalMutation = useMutation({
     mutationFn: (mod: ModRecord) => apiVoid(`/api/mods/${mod.guid}/local`, { method: "DELETE" }),
     onSuccess: (_result, mod) => {
-      setNotice(`${mod.name ?? mod.guid} removed from disk; the library row is kept.`);
+      setNotice(`${mod.name ?? mod.guid}: downloaded files deleted; the library entry is kept.`);
       setDiskTarget(null);
       setDeleteError(null);
       void invalidateMods();
@@ -320,7 +321,7 @@ export function ModsPage() {
   const removeLibraryMutation = useMutation({
     mutationFn: (mod: ModRecord) => apiVoid(`/api/mods/${mod.guid}`, { method: "DELETE" }),
     onSuccess: (_result, mod) => {
-      setNotice(`${mod.name ?? mod.guid} removed from the library.`);
+      setNotice(`${mod.name ?? mod.guid} deleted entirely from the library.`);
       setLibraryTarget(null);
       setDeleteError(null);
       void invalidateMods();
@@ -443,7 +444,7 @@ export function ModsPage() {
     if (graphQuery.dataUpdatedAt !== 0 && scanJobId !== null) setScanJobId(null);
   }, [graphQuery.dataUpdatedAt]);
 
-  const renderReferences = () => {
+  const renderReferences = (kind: "disk" | "full") => {
     if (!refTarget) return null;
     if (referencesQuery.isLoading) return <p className="text-[11px] text-stone-500">Checking references…</p>;
     if (referencesQuery.isError)
@@ -460,27 +461,35 @@ export function ModsPage() {
           Nothing references this mod — no server definition, modpack, or dependent mod.
         </p>
       );
+    const blocksDiskDelete = !data.servers.length && !data.modpacks.length && data.required_by.length > 0;
     return (
-      <div className="space-y-1 border border-stone-700 bg-stone-900/60 p-2 text-[11px] text-stone-300">
+      <div className="space-y-2 border border-red-800 bg-red-950/50 p-3 text-sm text-red-300">
+        <Badge tone="bad">Still referenced</Badge>
         {data.servers.length ? (
           <p>
-            Server definitions: <span className="text-amber-300">{data.servers.join(", ")}</span>
+            Server definitions: <span className="font-semibold">{data.servers.join(", ")}</span>
           </p>
         ) : null}
         {data.modpacks.length ? (
           <p>
-            Modpacks: <span className="text-amber-300">{data.modpacks.join(", ")}</span>
+            Modpacks: <span className="font-semibold">{data.modpacks.join(", ")}</span>
           </p>
         ) : null}
         {data.required_by.length ? (
           <p>
             Required by:{" "}
-            <span className="text-amber-300">
+            <span className="font-semibold">
               {data.required_by.map((ref) => ref.name ?? ref.guid).join(", ")}
             </span>
           </p>
         ) : null}
-        <p className="text-stone-500">The delete is refused while any of these hold a reference.</p>
+        <p className="text-red-300/80">
+          {kind === "full"
+            ? "The delete is refused while any of these hold a reference."
+            : blocksDiskDelete
+              ? "This still blocks deleting the downloaded files — it's kept alive as a dependency of another mod."
+              : "None of these block deleting the downloaded files — only a dependency link would. The assignments above are kept, and this mod is refetched automatically the next time it's needed."}
+        </p>
       </div>
     );
   };
@@ -687,6 +696,7 @@ export function ModsPage() {
                         </button>
                       </th>
                     ))}
+                    <th className="py-2 pr-4 font-semibold">Local</th>
                     <th className="py-2 pr-4 font-semibold">Actions</th>
                   </tr>
                 </thead>
@@ -736,6 +746,13 @@ export function ModsPage() {
                           <td className="whitespace-nowrap py-2 pr-4">
                             <Badge tone={availabilityToneOf(mod)}>{availabilityOf(mod)}</Badge>
                           </td>
+                          <td className="whitespace-nowrap py-2 pr-4">
+                            <LocalStateBadge
+                              guid={mod.guid}
+                              isLocal={mod.is_local}
+                              onDone={() => void invalidateMods()}
+                            />
+                          </td>
                           <td className="py-2 pr-4">
                             <div className="flex flex-wrap gap-1.5">
                               <Button
@@ -781,7 +798,7 @@ export function ModsPage() {
                                 onClick={() => openDiskDialog(mod)}
                                 disabled={rowBusy || !mod.is_local}
                               >
-                                Remove from disk
+                                Delete downloaded files
                               </Button>
                               <Button
                                 size="sm"
@@ -789,14 +806,14 @@ export function ModsPage() {
                                 onClick={() => openLibraryDialog(mod)}
                                 disabled={rowBusy}
                               >
-                                Remove from library
+                                Delete mod entirely
                               </Button>
                             </div>
                           </td>
                         </tr>
                         {open && (
                           <tr className="bg-stone-950/40">
-                            <td colSpan={8} className="px-4 py-3">
+                            <td colSpan={9} className="px-4 py-3">
                               <div className="space-y-2 text-[11px] leading-5 text-stone-400">
                                 {mod.summary && <p>{mod.summary}</p>}
                                 <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-stone-500">
@@ -892,16 +909,17 @@ export function ModsPage() {
       </Dialog>
       <Dialog
         open={diskTarget !== null}
-        title={`Remove ${diskTarget?.name ?? diskTarget?.guid ?? "mod"} from disk?`}
+        title={`Delete downloaded files for ${diskTarget?.name ?? diskTarget?.guid ?? "mod"}?`}
         onClose={() => !removeLocalMutation.isPending && setDiskTarget(null)}
       >
         <div className="space-y-4">
+          {renderReferences("disk")}
           <p className="text-xs leading-5 text-stone-400">
-            This deletes the addon files for <b className="text-stone-200">{diskTarget?.guid}</b> from the local
-            cache. The library row is kept, so the mod can be re-downloaded later. Deletion is refused while any
-            server is running.
+            Deletes only the cached addon files for <b className="text-stone-200">{diskTarget?.guid}</b> from
+            local disk. The library entry and every reference to this mod — server assignments, modpacks, and
+            dependency links — are kept untouched, and it will be refetched automatically the next time a
+            server that needs it starts. Deletion is refused while any server is running.
           </p>
-          {renderReferences()}
           {deleteError && <p className="error">{deleteError}</p>}
           <div className="flex justify-end gap-2">
             <Button
@@ -918,27 +936,25 @@ export function ModsPage() {
               disabled={removeLocalMutation.isPending}
               onClick={() => diskTarget && removeLocalMutation.mutate(diskTarget)}
             >
-              {removeLocalMutation.isPending ? "Removing..." : "Remove files"}
+              {removeLocalMutation.isPending ? "Deleting..." : "Delete downloaded files"}
             </Button>
           </div>
         </div>
       </Dialog>
       <Dialog
         open={libraryTarget !== null}
-        title={`Remove ${libraryTarget?.name ?? libraryTarget?.guid ?? "mod"} from the library?`}
+        title={`Delete ${libraryTarget?.name ?? libraryTarget?.guid ?? "mod"} entirely?`}
         onClose={() => !removeLibraryMutation.isPending && setLibraryTarget(null)}
       >
         <div className="space-y-4">
+          {renderReferences("full")}
           <p className="text-xs leading-5 text-stone-400">
-            Deletes the library row for <b className="text-stone-200">{libraryTarget?.guid}</b> — its version
-            cache, dependency records, and scenarios.
-            {libraryTarget?.is_local
-              ? " The on-disk addon files are deleted too. This is refused while a server is running."
-              : " Nothing is on disk to remove."}{" "}
-            The delete is refused if the mod is still referenced by a server definition, modpack, or resolved
-            dependency. Add it again by Workshop URL/ID to restore it.
+            Deletes the library entry for <b className="text-stone-200">{libraryTarget?.guid}</b> entirely —
+            its{libraryTarget?.is_local ? " downloaded files," : ""} version cache, dependency records, and
+            scenarios. The delete is refused if the mod is still referenced, directly or through a dependency,
+            by any server definition or modpack. To use this mod again afterward, re-add it by Workshop URL or
+            GUID.
           </p>
-          {renderReferences()}
           {deleteError && <p className="error">{deleteError}</p>}
           <div className="flex justify-end gap-2">
             <Button
@@ -955,7 +971,7 @@ export function ModsPage() {
               disabled={removeLibraryMutation.isPending}
               onClick={() => libraryTarget && removeLibraryMutation.mutate(libraryTarget)}
             >
-              {removeLibraryMutation.isPending ? "Removing..." : "Remove entry"}
+              {removeLibraryMutation.isPending ? "Deleting..." : "Delete mod entirely"}
             </Button>
           </div>
         </div>

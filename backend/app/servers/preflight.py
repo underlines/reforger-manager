@@ -124,6 +124,7 @@ async def preflight(session: AsyncSession, server_id: int) -> PreflightReport:
             "source": getattr(node, "via", "log"),
             "state": getattr(node, "state", "unresolved"),
             "version": selected_version or (mod.latest_version if mod else None),
+            "local": bool(mod is not None and mod.is_local),
         }
 
         api_mod: dict | None = None

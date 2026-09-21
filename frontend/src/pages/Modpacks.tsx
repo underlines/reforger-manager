@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { Empty } from "../components/Empty";
 import { PageHeading } from "../components/PageHeading";
 import { ModLibraryPicker } from "../components/mods/ModLibraryPicker";
+import { LocalStateBadge } from "../components/mods/LocalStateBadge";
 import { ModTree } from "../components/mods/ModTree";
 import { SortableModList } from "../components/mods/SortableModList";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
@@ -408,6 +409,11 @@ export function ModpacksPage() {
                           const open = expandedRows.has(item.mod_guid);
                           return (
                             <>
+                              <LocalStateBadge
+                                guid={item.mod_guid}
+                                isLocal={graph.nodes.find((n) => n.guid === item.mod_guid)?.is_local ?? false}
+                                onDone={() => void graphQuery.refetch()}
+                              />
                               <Button
                                 size="sm"
                                 variant="ghost"

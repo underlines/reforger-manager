@@ -83,6 +83,7 @@ async def test_engine_builtin_guid_never_blocks(sessionmaker, monkeypatch):
     assert not any(check.guid == ENGINE_GUID for check in report.checks)
     assert not any(ENGINE_GUID in check.detail for check in report.checks)
     assert not any(mod["guid"] == ENGINE_GUID for mod in report.resolved_mods)
+    assert all(mod["local"] is False for mod in report.resolved_mods)
     assert report.verdict != "blocked"
 
 

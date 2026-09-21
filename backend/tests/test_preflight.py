@@ -81,7 +81,7 @@ async def test_green_report_and_exact_json_shape(session, monkeypatch):
     assert report.as_dict() == {
         "verdict": "green",
         "checks": [{"name": "preflight", "level": "green", "detail": "All enabled addons and resolved dependencies passed the available checks."}],
-        "resolved_mods": [{"guid": GUID_A, "name": f"Mod {GUID_A}", "source": "api", "state": "ok", "version": "1.0", "availability": "ok", "game_version": "1.8.0.10"}],
+        "resolved_mods": [{"guid": GUID_A, "name": f"Mod {GUID_A}", "source": "api", "state": "ok", "version": "1.0", "local": True, "availability": "ok", "game_version": "1.8.0.10"}],
     }
 
 
@@ -218,7 +218,10 @@ async def test_404_gproj_and_profile_log_fallback(session, monkeypatch, tmp_path
 
     report = await preflight_module.preflight(session, 9)
     guids = {item["guid"] for item in report.resolved_mods}
+    by_guid = {item["guid"]: item for item in report.resolved_mods}
     assert report.verdict == "blocked"
     assert GUID_B in guids  # persisted addon.gproj edge
     assert set(LOG_GUIDS) <= guids  # REFORGER_9-style recovery
+    assert by_guid[GUID_A]["local"] is False  # library row present but is_local=False
+    assert by_guid[GUID_B]["local"] is True
     assert any(check.name == f"Workshop {GUID_A}" and check.level == "blocked" for check in report.checks)

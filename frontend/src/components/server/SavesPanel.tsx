@@ -15,6 +15,7 @@ import {
   type SelectionOut,
   type SnapshotOut,
 } from "../../lib/api";
+import { startServerReady } from "../../lib/serverStart";
 
 const errText = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
@@ -273,7 +274,7 @@ export function SavesPanel({
     setArmBusy(false);
     await run("restart-load", async () => {
       await api(`/api/servers/${id}/stop`, { method: "POST" });
-      await api(`/api/servers/${id}/start`, { method: "POST" });
+      await startServerReady(Number(id));
     });
     invalidate();
   };
@@ -331,7 +332,7 @@ export function SavesPanel({
     setFreshBusy(false);
     await run("restart-load", async () => {
       await api(`/api/servers/${id}/stop`, { method: "POST" });
-      await api(`/api/servers/${id}/start`, { method: "POST" });
+      await startServerReady(Number(id));
     });
     invalidate();
   };

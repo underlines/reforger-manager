@@ -136,6 +136,12 @@ class ServerConfigOut(BaseModel):
     path: str
 
 
+class ServerModsReadyOut(BaseModel):
+    job_id: int | None
+    kind: str | None
+    missing: list[str]
+
+
 class ServerModPinIn(BaseModel):
     version: str = Field(min_length=1, max_length=64)
     reason: str | None = Field(default=None, max_length=4096)

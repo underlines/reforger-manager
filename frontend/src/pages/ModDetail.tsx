@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { PageHeading } from "../components/PageHeading";
+import { LocalStateBadge } from "../components/mods/LocalStateBadge";
 import { ModTree } from "../components/mods/ModTree";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Dialog, Input } from "../components/ui";
 import { api, apiVoid, type Server } from "../lib/api";
@@ -27,6 +28,15 @@ type DepTree = {
   roots: string[];
   nodes: DepNode[];
   edges: Array<{ from: string; to: string }>;
+};
+
+// Same shape as the live reference check Mods.tsx queries. detail.used_by /
+// detail.required_by below are page-load-time and miss modpacks, so they are
+// not used for the delete-dialog warnings — this is.
+type ModReferences = {
+  servers: string[];
+  modpacks: string[];
+  required_by: { guid: string; name: string | null }[];
 };
 
 type ModDetail = {
@@ -95,6 +105,8 @@ export function ModDetailPage() {
   const [pinVersion, setPinVersion] = useState("");
   const [pinReason, setPinReason] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [diskDeleteOpen, setDiskDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [requiresMode, setRequiresMode] = useState<"nested" | "flat">("nested");
   const [requiredByMode, setRequiredByMode] = useState<"nested" | "flat">("flat");
@@ -105,6 +117,14 @@ export function ModDetailPage() {
     queryKey: ["mod", guid],
     queryFn: () => api<ModDetail>(`/api/mods/${guid}`),
     enabled: guid.length > 0,
+  });
+
+  // Live reference check backing the delete dialogs' warning — only runs
+  // while one of those dialogs is open.
+  const referencesQuery = useQuery({
+    queryKey: ["mod-references", guid],
+    queryFn: () => api<ModReferences>(`/api/mods/${guid}/references`),
+    enabled: guid.length > 0 && (deleteOpen || diskDeleteOpen),
   });
 
   // Version history hits the live Workshop API — runs on request only (button
@@ -205,14 +225,33 @@ export function ModDetailPage() {
   const deleteMutation = useMutation({
     mutationFn: () => apiVoid(`/api/mods/${guid}`, { method: "DELETE" }),
     onSuccess: () => {
-      setDeleteOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["mods"] });
       void queryClient.invalidateQueries({ queryKey: ["storage"] });
       navigate("/mods");
     },
     onError: (error) => {
-      setDeleteOpen(false);
-      setNotice(errorMessage(error));
+      // Keep the dialog open on failure and show the reason inline — same
+      // pattern as Mods.tsx's deleteError, instead of closing the dialog.
+      const message = errorMessage(error);
+      setDeleteError(message);
+      setNotice(message);
+    },
+  });
+
+  const removeLocalMutation = useMutation({
+    mutationFn: () => apiVoid(`/api/mods/${guid}/local`, { method: "DELETE" }),
+    onSuccess: () => {
+      setNotice(`${detailQuery.data?.name ?? guid}: downloaded files deleted; the library entry is kept.`);
+      setDiskDeleteOpen(false);
+      setDeleteError(null);
+      void invalidateMod();
+      void queryClient.invalidateQueries({ queryKey: ["mods"] });
+      void queryClient.invalidateQueries({ queryKey: ["storage"] });
+    },
+    onError: (error) => {
+      const message = errorMessage(error);
+      setDeleteError(message);
+      setNotice(message);
     },
   });
 
@@ -221,6 +260,67 @@ export function ModDetailPage() {
     setPinVersion(mod?.installed_version ?? "");
     setPinReason(mod?.pinned_reason ?? "");
     setPinOpen(true);
+  };
+
+  const openDeleteDialog = () => {
+    setDeleteError(null);
+    setDiskDeleteOpen(false);
+    setDeleteOpen(true);
+  };
+
+  const openDiskDeleteDialog = () => {
+    setDeleteError(null);
+    setDeleteOpen(false);
+    setDiskDeleteOpen(true);
+  };
+
+  const renderReferences = (kind: "disk" | "full") => {
+    if (referencesQuery.isLoading) return <p className="text-[11px] text-stone-500">Checking references…</p>;
+    if (referencesQuery.isError)
+      return (
+        <p className="text-[11px] text-amber-300">
+          Could not check references: {errorMessage(referencesQuery.error)}
+        </p>
+      );
+    const data = referencesQuery.data;
+    if (!data) return null;
+    if (!data.servers.length && !data.modpacks.length && !data.required_by.length)
+      return (
+        <p className="text-[11px] text-emerald-300">
+          Nothing references this mod — no server definition, modpack, or dependent mod.
+        </p>
+      );
+    const blocksDiskDelete = !data.servers.length && !data.modpacks.length && data.required_by.length > 0;
+    return (
+      <div className="space-y-2 border border-red-800 bg-red-950/50 p-3 text-sm text-red-300">
+        <Badge tone="bad">Still referenced</Badge>
+        {data.servers.length ? (
+          <p>
+            Server definitions: <span className="font-semibold">{data.servers.join(", ")}</span>
+          </p>
+        ) : null}
+        {data.modpacks.length ? (
+          <p>
+            Modpacks: <span className="font-semibold">{data.modpacks.join(", ")}</span>
+          </p>
+        ) : null}
+        {data.required_by.length ? (
+          <p>
+            Required by:{" "}
+            <span className="font-semibold">
+              {data.required_by.map((ref) => ref.name ?? ref.guid).join(", ")}
+            </span>
+          </p>
+        ) : null}
+        <p className="text-red-300/80">
+          {kind === "full"
+            ? "The delete is refused while any of these hold a reference."
+            : blocksDiskDelete
+              ? "This still blocks deleting the downloaded files — it's kept alive as a dependency of another mod."
+              : "None of these block deleting the downloaded files — only a dependency link would. The assignments above are kept, and this mod is refetched automatically the next time it's needed."}
+        </p>
+      </div>
+    );
   };
 
   const submitPin = (event: FormEvent<HTMLFormElement>) => {
@@ -256,7 +356,8 @@ export function ModDetailPage() {
     unpinMutation.isPending ||
     verifyMutation.isPending ||
     downloadMutation.isPending ||
-    deleteMutation.isPending;
+    deleteMutation.isPending ||
+    removeLocalMutation.isPending;
 
   return (
     <>
@@ -289,8 +390,11 @@ export function ModDetailPage() {
                 Pin version
               </Button>
             )}
-            <Button variant="outline" onClick={() => setDeleteOpen(true)} disabled={busy}>
-              Remove from library
+            <Button variant="outline" onClick={openDiskDeleteDialog} disabled={busy || !detail.is_local}>
+              Delete downloaded files
+            </Button>
+            <Button variant="outline" onClick={openDeleteDialog} disabled={busy}>
+              Delete mod entirely
             </Button>
           </>
         }
@@ -309,8 +413,11 @@ export function ModDetailPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              {detail.is_local && <Badge tone="good">Local</Badge>}
-              {!detail.is_local && <Badge tone="neutral">Not local</Badge>}
+              <LocalStateBadge
+                guid={detail.guid}
+                isLocal={detail.is_local}
+                onDone={() => void invalidateMod()}
+              />
               {detail.stale_pin && <Badge tone="bad">Stale pin</Badge>}
               {detail.pinned_version && !detail.stale_pin && (
                 <Badge tone="neutral">Pinned {detail.pinned_version}</Badge>
@@ -512,26 +619,19 @@ export function ModDetailPage() {
 
       <Dialog
         open={deleteOpen}
-        title={`Remove ${detail.name ?? detail.guid} from the library?`}
+        title={`Delete ${detail.name ?? detail.guid} entirely?`}
         onClose={() => !deleteMutation.isPending && setDeleteOpen(false)}
       >
         <div className="space-y-4">
+          {renderReferences("full")}
           <p className="text-xs leading-5 text-stone-400">
-            Deletes the library row for <b className="text-stone-200">{detail.guid}</b> — its version
-            cache, dependency records, and scenarios.
-            {detail.is_local
-              ? " The on-disk addon files are deleted too. This is refused while a server is running."
-              : " Nothing is on disk to remove."}{" "}
-            The delete is refused if the mod is still referenced by a server definition, modpack, or
-            resolved dependency. Add it again by Workshop URL/ID to restore it.
+            Deletes the library entry for <b className="text-stone-200">{detail.guid}</b> entirely — its
+            {detail.is_local ? " downloaded files," : ""} version cache, dependency records, and scenarios.
+            The delete is refused if the mod is still referenced, directly or through a dependency, by any
+            server definition or modpack. To use this mod again afterward, re-add it by Workshop URL or
+            GUID.
           </p>
-          {detail.required_by.length ? (
-            <p className="text-[11px] text-amber-300">
-              {detail.required_by.map((ref) => ref.name ?? ref.guid).join(", ")}{" "}
-              {detail.required_by.length === 1 ? "depends" : "depend"} on this mod — the delete will be
-              refused while {detail.required_by.length === 1 ? "it is" : "any is"} assigned or packed.
-            </p>
-          ) : null}
+          {deleteError && <p className="error">{deleteError}</p>}
           <div className="flex justify-end gap-2">
             <Button
               type="button"
@@ -547,7 +647,42 @@ export function ModDetailPage() {
               onClick={() => deleteMutation.mutate()}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? "Removing..." : "Remove entry"}
+              {deleteMutation.isPending ? "Deleting..." : "Delete mod entirely"}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={diskDeleteOpen}
+        title={`Delete downloaded files for ${detail.name ?? detail.guid}?`}
+        onClose={() => !removeLocalMutation.isPending && setDiskDeleteOpen(false)}
+      >
+        <div className="space-y-4">
+          {renderReferences("disk")}
+          <p className="text-xs leading-5 text-stone-400">
+            Deletes only the cached addon files for <b className="text-stone-200">{detail.guid}</b> from
+            local disk. The library entry and every reference to this mod — server assignments, modpacks,
+            and dependency links — are kept untouched, and it will be refetched automatically the next time
+            a server that needs it starts. Deletion is refused while any server is running.
+          </p>
+          {deleteError && <p className="error">{deleteError}</p>}
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setDiskDeleteOpen(false)}
+              disabled={removeLocalMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => removeLocalMutation.mutate()}
+              disabled={removeLocalMutation.isPending}
+            >
+              {removeLocalMutation.isPending ? "Deleting..." : "Delete downloaded files"}
             </Button>
           </div>
         </div>
