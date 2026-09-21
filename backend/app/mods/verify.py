@@ -16,6 +16,7 @@ from pathlib import Path
 from ..core.config import settings
 from ..core.jobs import JobContext
 from ..servers.supervisor import supervisor
+from .scanner import scan_all
 
 VERIFY_REPAIR_JOB_KIND = "verify_repair"
 
@@ -146,13 +147,20 @@ async def _consume_verify_line(
     ctx: JobContext,
     progress: _VerifyProgress,
     line: str,
+    *,
+    total_local: int,
 ) -> None:
     """Log one engine line, fold it into the progress and react to verdicts."""
     await ctx.log(line)
     progress.consume(line)
     result = progress.result()
+    # ``checked`` is a raw addon count, not a percentage -- without a known
+    # denominator it used to double as one (capped at 99), which stalled well
+    # short of 100% on a cache bigger than 99 addons and overstated progress
+    # on a smaller one. Scale it against the local addon cache size instead.
+    pct = min(99.0, (result["checked"] / total_local) * 100.0) if total_local > 0 else 0.0
     await ctx.progress(
-        min(99.0, float(result["checked"])),
+        pct,
         f"checked {result['checked']}; repaired {result['repaired']}; "
         f"failed {result['failed']}",
     )
@@ -170,6 +178,8 @@ async def _stream_stdout(
     process: asyncio.subprocess.Process,
     ctx: JobContext,
     progress: _VerifyProgress,
+    *,
+    total_local: int,
 ) -> int:
     """Drain an explicitly attached stdout pipe.
 
@@ -183,7 +193,7 @@ async def _stream_stdout(
         line = raw.decode("utf-8", "replace").rstrip()
         if not line:
             continue
-        await _consume_verify_line(process, ctx, progress, line)
+        await _consume_verify_line(process, ctx, progress, line, total_local=total_local)
     return await process.wait()
 
 
@@ -192,6 +202,8 @@ async def _follow_console_log(
     profile_dir: Path,
     ctx: JobContext,
     progress: _VerifyProgress,
+    *,
+    total_local: int,
 ) -> int:
     """Wait for the engine's console log, then tail it line by line."""
     loop = asyncio.get_running_loop()
@@ -234,7 +246,9 @@ async def _follow_console_log(
                     line = raw_line.rstrip()
                     if not line:
                         continue
-                    await _consume_verify_line(process, ctx, progress, line)
+                    await _consume_verify_line(
+                        process, ctx, progress, line, total_local=total_local
+                    )
                 continue
             if process.returncode is not None:
                 if exited_at is None:
@@ -243,7 +257,9 @@ async def _follow_console_log(
                     if buf.strip():
                         line = buf.rstrip()
                         if line:
-                            await _consume_verify_line(process, ctx, progress, line)
+                            await _consume_verify_line(
+                                process, ctx, progress, line, total_local=total_local
+                            )
                         buf = ""
                     return await process.wait()
             if ctx.cancelled:
@@ -282,6 +298,7 @@ async def run_verify_repair(
             "because the engine has no confirmed selective verify flag"
         )
 
+    total_local = len(scan_all().mods)
     progress = _VerifyProgress()
     with tempfile.TemporaryDirectory(prefix="reforger-verify-") as tmp:
         profile_dir = Path(tmp) / "profile"
@@ -297,10 +314,12 @@ async def run_verify_repair(
         )
         try:
             if process.stdout is not None:
-                exit_code = await _stream_stdout(process, ctx, progress)
+                exit_code = await _stream_stdout(
+                    process, ctx, progress, total_local=total_local
+                )
             else:
                 exit_code = await _follow_console_log(
-                    process, profile_dir, ctx, progress
+                    process, profile_dir, ctx, progress, total_local=total_local
                 )
         except asyncio.CancelledError:
             await _stop_process(process)

@@ -78,6 +78,7 @@ class DownloadProgress:
     percentages: dict[str, float] = field(default_factory=dict)
     totals_mb: dict[str, float] = field(default_factory=dict)
     versions: dict[str, str] = field(default_factory=dict)
+    started_order: list[str] = field(default_factory=list)
     speed: str | None = None
     ready: bool = False
     current_guid: str | None = None
@@ -94,6 +95,8 @@ class DownloadProgress:
             self.names[guid] = name
             self.name_to_guid[name] = guid
             self.current_guid = guid
+            if guid not in self.started_order:
+                self.started_order.append(guid)
             return {"kind": "start", "guid": guid, "name": name}
 
         match = _VERSION_RE.search(text)
@@ -130,14 +133,26 @@ class DownloadProgress:
             return {"kind": "ready"}
         return None
 
-    def percent(self, guids: list[str]) -> float:
-        """Return byte-weighted progress when reported addon sizes are known."""
-        values = [(guid, self.percentages.get(guid, 0.0)) for guid in guids]
-        known = [(guid, pct) for guid, pct in values if self.totals_mb.get(guid, 0) > 0]
-        if known:
-            total = sum(self.totals_mb[guid] for guid, _pct in known)
-            return sum(self.totals_mb[guid] * pct for guid, pct in known) / total
-        return sum(pct for _guid, pct in values) / len(values) if values else 100.0
+    def overall_percent(self, total_requested: int) -> float:
+        """Count-based progress across the whole requested batch.
+
+        A byte-weighted average looked more precise but wasn't: most addons
+        report "0/0 MB" (unknown size) even mid-download, so only whichever
+        addons happened to have a known size counted at all, and that set
+        grows and shrinks as addons start and finish -- observed swinging
+        100% -> 15% mid-run on a real "update all". Treating every requested
+        addon as one equal-size slot is cruder but monotonic: every addon
+        before the current one counts as a full slot, the current one
+        contributes its own byte fraction (0 until it reports one).
+        """
+        if total_requested <= 0:
+            return 100.0
+        completed_slots = max(0, len(self.started_order) - 1)
+        current = self.started_order[-1] if self.started_order else None
+        current_frac = (
+            min(1.0, self.percentages.get(current, 0.0) / 100.0) if current else 0.0
+        )
+        return min(100.0, (completed_slots + current_frac) / total_requested * 100.0)
 
 
 def _normalise_inputs(
@@ -291,8 +306,8 @@ async def _run_engine(ctx: "JobContext | None", guids: list[str], versions: dict
             if ctx:
                 await ctx.log(line)
             event = parser.feed(line)
-            if event and event["kind"] == "progress" and ctx:
-                await ctx.progress(parser.percent(guids), event.get("name"))
+            if event and event["kind"] in ("start", "progress") and ctx:
+                await ctx.progress(parser.overall_percent(len(guids)), event.get("name"))
             if event and event["kind"] == "ready":
                 return await _finish_ok()
             if _FATAL_RE.search(line):

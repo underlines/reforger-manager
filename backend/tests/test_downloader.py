@@ -10,20 +10,21 @@ from app.mods import downloader
 
 
 class DownloadProgressTests(unittest.TestCase):
-    def test_parses_verified_lines_and_weights_known_sizes(self):
+    def test_parses_lines_and_reports_count_based_progress(self):
         progress = downloader.DownloadProgress()
         self.assertEqual(
             progress.feed("BACKEND : Addon Download started ABCDEF0123456789 - Small Mod"),
             {"kind": "start", "guid": "ABCDEF0123456789", "name": "Small Mod"},
         )
-        progress.feed("BACKEND : Addon Download started 0123456789ABCDEF - Large Mod")
         progress.feed("BACKEND : Small Mod: [====>___] 20% 20/100 MB")
+        # First of two requested addons, 20% into its own slot.
+        self.assertAlmostEqual(progress.overall_percent(2), 10.0, places=5)
+
+        progress.feed("BACKEND : Addon Download started 0123456789ABCDEF - Large Mod")
         progress.feed("BACKEND : Large Mod: [====>___] 50% 500/1000 MB")
-        self.assertAlmostEqual(
-            progress.percent(["ABCDEF0123456789", "0123456789ABCDEF"]),
-            47.272727,
-            places=5,
-        )
+        # Small Mod's slot now counts as fully done regardless of its last
+        # reported byte percent; Large Mod is the current slot at 50%.
+        self.assertAlmostEqual(progress.overall_percent(2), 75.0, places=5)
         self.assertEqual(
             progress.feed("BACKEND : Download speed 1.64 KB/s"),
             {"kind": "speed", "speed": "1.64 KB/s"},
